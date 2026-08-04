@@ -47,11 +47,19 @@ def _x_cli(args: List[str]) -> Dict[str, Any]:
     out = proc.stdout.strip()
     err = proc.stderr.strip()
     if proc.returncode != 0:
-        return {"ok": False, "error": err or f"x-cli exited {proc.returncode}"}
+        # x-cli prints a full Python traceback on API errors; surface the
+        # concise error line, not the stack, so the UI stays readable.
+        err_line = err.splitlines()[-1] if err else f"x-cli exited {proc.returncode}"
+        return {"ok": False, "error": err_line}
     try:
         return {"ok": True, "data": json.loads(out)}
     except json.JSONDecodeError:
         return {"ok": True, "raw": out}
+
+
+def x_verify() -> Dict[str, Any]:
+    """Live check: ask x-cli for the authenticated user."""
+    return _x_cli(["user", "get", "me"])
 
 
 def x_post(text: str) -> Dict[str, Any]:
@@ -102,6 +110,15 @@ def _reddit():
     )
 
 
+def reddit_verify() -> Dict[str, Any]:
+    try:
+        r = _reddit()
+        me = r.user.me()
+        return {"ok": True, "username": str(me.name)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def reddit_post(subreddit: str, title: str, text: str = "", url: str = "") -> Dict[str, Any]:
     try:
         r = _reddit()
@@ -146,6 +163,21 @@ def reddit_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]:
 # ───────────────────────────────── Facebook ──────────────────────────────────
 def _fb_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {config.get('FB_PAGE_ACCESS_TOKEN')}"}
+
+
+def fb_verify() -> Dict[str, Any]:
+    token = config.get("FB_PAGE_ACCESS_TOKEN")
+    pid = config.get("FB_PAGE_ID")
+    if not token or not pid:
+        return {"ok": False, "error": "FB_PAGE_ACCESS_TOKEN / FB_PAGE_ID not configured"}
+    try:
+        resp = requests.get(f"{GRAPH}/{pid}", params={"fields": "name", "access_token": token}, timeout=30)
+        body = resp.json()
+        if not resp.ok:
+            return {"ok": False, "error": body.get("error", {}).get("message", resp.text)}
+        return {"ok": True, "name": body.get("name")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 def fb_post(message: str) -> Dict[str, Any]:
@@ -193,6 +225,21 @@ def fb_feeds(limit: int = 10) -> Dict[str, Any]:
 
 
 # ───────────────────────────────── Instagram ─────────────────────────────────
+def ig_verify() -> Dict[str, Any]:
+    token = config.get("FB_PAGE_ACCESS_TOKEN")
+    ig_id = config.get("IG_USER_ID")
+    if not token or not ig_id:
+        return {"ok": False, "error": "FB_PAGE_ACCESS_TOKEN / IG_USER_ID not configured"}
+    try:
+        resp = requests.get(f"{GRAPH}/{ig_id}", params={"fields": "username", "access_token": token}, timeout=30)
+        body = resp.json()
+        if not resp.ok:
+            return {"ok": False, "error": body.get("error", {}).get("message", resp.text)}
+        return {"ok": True, "username": body.get("username")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def ig_post(image_url: str, caption: str = "") -> Dict[str, Any]:
     """Instagram Graph API publishes via a container + publish cycle. Needs a hosted image URL."""
     token = config.get("FB_PAGE_ACCESS_TOKEN")
@@ -247,6 +294,193 @@ def ig_feeds(limit: int = 10) -> Dict[str, Any]:
                 "url": d.get("permalink"),
                 "created_at": d.get("timestamp"),
             }
+            for d in body.get("data", [])
+        ]
+        return {"ok": True, "items": items}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ───────────────────────────────── TikTok ─────────────────────────────────────
+# TikTok Content Posting API (video). Requires an Open/Business account + an app
+# registered in the TikTok Developer Portal with the Video Upload/Publish scopes.
+TIKTOK = "https://open.tiktokapis.com/v2"
+
+
+def _tt_headers() -> Dict[str, str]:
+    return {"Authorization": f"Bearer {config.get('TIKTOK_ACCESS_TOKEN')}"}
+
+
+def tt_verify() -> Dict[str, Any]:
+    tok = config.get("TIKTOK_ACCESS_TOKEN")
+    if not tok:
+        return {"ok": False, "error": "TIKTOK_ACCESS_TOKEN not configured"}
+    try:
+        resp = requests.post(
+            f"{TIKTOK}/oauth/check_token/",
+            headers=_tt_headers(),
+            data={"grant_type": "client_credentials"},
+            timeout=30,
+        )
+        if resp.ok:
+            return {"ok": True, "scope": resp.json().get("scope")}
+        # check_token unsupported for this token type; fall back to listing videos
+        r2 = requests.post(f"{TIKTOK}/video/list/", headers=_tt_headers(),
+                           json={"filters": {"video_ids": []}}, timeout=30)
+        if r2.ok:
+            return {"ok": True}
+        body = r2.json()
+        return {"ok": False, "error": body.get("error", {}).get("message", r2.text)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def tt_post(video_url: str, caption: str = "", privacy: str = "SELF_ONLY") -> Dict[str, Any]:
+    """Publish a video by public URL. Two-step: init (upload) -> publish."""
+    tok = config.get("TIKTOK_ACCESS_TOKEN")
+    if not tok:
+        return {"ok": False, "error": "TIKTOK_ACCESS_TOKEN not configured"}
+    try:
+        init = requests.post(
+            f"{TIKTOK}/video/init/",
+            headers=_tt_headers(),
+            json={"source": "PULL_FROM_URL", "video_url": video_url},
+            timeout=30,
+        ).json()
+        vid = init.get("data", {}).get("video_id")
+        if not vid:
+            return {"ok": False, "error": init.get("error", {}).get("message", "no video_id from init")}
+        pub = requests.post(
+            f"{TIKTOK}/video/publish/",
+            headers=_tt_headers(),
+            json={"video_id": vid, "post_info": {"title": caption, "privacy_level": privacy}},
+            timeout=30,
+        ).json()
+        pid = pub.get("data", {}).get("publish_id")
+        if pid:
+            return {"ok": True, "publish_id": pid}
+        return {"ok": False, "error": pub.get("error", {}).get("message", "publish failed")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def tt_feeds(limit: int = 10) -> Dict[str, Any]:
+    tok = config.get("TIKTOK_ACCESS_TOKEN")
+    if not tok:
+        return {"ok": False, "error": "TIKTOK_ACCESS_TOKEN not configured"}
+    try:
+        resp = requests.post(
+            f"{TIKTOK}/video/list/",
+            headers=_tt_headers(),
+            json={"filters": {"video_ids": []}, "max_count": limit},
+            timeout=30,
+        )
+        body = resp.json()
+        if not resp.ok:
+            return {"ok": False, "error": body.get("error", {}).get("message", resp.text)}
+        items = [
+            {"id": d.get("id"), "text": d.get("video_description"), "url": d.get("share_url"), "created_at": d.get("create_time")}
+            for d in body.get("data", {}).get("videos", [])
+        ]
+        return {"ok": True, "items": items}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ───────────────────────────────── Twitch ────────────────────────────────────
+# Twitch Helix + chat. Requires a registered app (Client ID + Secret) and an
+# OAuth token with the scopes you want (chat:read, chat:edit, channel:manage:*).
+TWITCH = "https://api.twitch.tv/helix"
+
+
+def _twitch_headers() -> Dict[str, str]:
+    return {
+        "Client-Id": config.get("TWITCH_CLIENT_ID"),
+        "Authorization": f"Bearer {config.get('TWITCH_ACCESS_TOKEN')}",
+    }
+
+
+def twitch_verify() -> Dict[str, Any]:
+    cid = config.get("TWITCH_CLIENT_ID")
+    tok = config.get("TWITCH_ACCESS_TOKEN")
+    if not cid or not tok:
+        return {"ok": False, "error": "TWITCH_CLIENT_ID / TWITCH_ACCESS_TOKEN not configured"}
+    try:
+        resp = requests.get(f"{TWITCH}/users", headers=_twitch_headers(), timeout=30)
+        body = resp.json()
+        if not resp.ok:
+            return {"ok": False, "error": body.get("message", resp.text)}
+        d = (body.get("data") or [{}])[0]
+        return {"ok": True, "login": d.get("login"), "display_name": d.get("display_name")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def twitch_chat(message: str, channel: str = "") -> Dict[str, Any]:
+    """Send a chat message as the authenticated user. Needs chat:edit scope."""
+    cid = config.get("TWITCH_CLIENT_ID")
+    tok = config.get("TWITCH_ACCESS_TOKEN")
+    if not cid or not tok:
+        return {"ok": False, "error": "TWITCH_CLIENT_ID / TWITCH_ACCESS_TOKEN not configured"}
+    try:
+        me = requests.get(f"{TWITCH}/users", headers=_twitch_headers(), timeout=30).json()
+        me_id = (me.get("data") or [{}])[0].get("id")
+        target = channel or (me.get("data") or [{}])[0].get("login", "")
+        b = requests.get(f"{TWITCH}/users", params={"login": target}, headers=_twitch_headers(), timeout=30).json()
+        broadcaster_id = (b.get("data") or [{}])[0].get("id")
+        if not broadcaster_id:
+            return {"ok": False, "error": f"could not resolve channel '{target}'"}
+        r = requests.post(
+            f"{TWITCH}/chat/messages",
+            headers=_twitch_headers(),
+            json={"broadcaster_id": broadcaster_id, "sender_id": me_id, "message": message},
+            timeout=30,
+        )
+        body = r.json()
+        if not r.ok:
+            return {"ok": False, "error": body.get("message", r.text)}
+        return {"ok": True, "id": (body.get("data") or [{}])[0].get("message_id")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def twitch_set_title(title: str, category: str = "") -> Dict[str, Any]:
+    """Update the authenticated broadcaster's stream title (and optional category)."""
+    cid = config.get("TWITCH_CLIENT_ID")
+    tok = config.get("TWITCH_ACCESS_TOKEN")
+    if not cid or not tok:
+        return {"ok": False, "error": "TWITCH_CLIENT_ID / TWITCH_ACCESS_TOKEN not configured"}
+    try:
+        me = requests.get(f"{TWITCH}/users", headers=_twitch_headers(), timeout=30).json()
+        uid = (me.get("data") or [{}])[0].get("id")
+        body = {"broadcaster_id": uid, "title": title}
+        if category:
+            g = requests.get(f"{TWITCH}/games", params={"name": category}, headers=_twitch_headers(), timeout=30).json()
+            gid = (g.get("data") or [{}])[0].get("id")
+            if gid:
+                body["game_id"] = gid
+        r = requests.patch(f"{TWITCH}/channels", headers=_twitch_headers(), json=body, timeout=30)
+        if not r.ok:
+            return {"ok": False, "error": r.json().get("message", r.text)}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def twitch_feeds(limit: int = 10) -> Dict[str, Any]:
+    cid = config.get("TWITCH_CLIENT_ID")
+    tok = config.get("TWITCH_ACCESS_TOKEN")
+    if not cid or not tok:
+        return {"ok": False, "error": "TWITCH_CLIENT_ID / TWITCH_ACCESS_TOKEN not configured"}
+    try:
+        me = requests.get(f"{TWITCH}/users", headers=_twitch_headers(), timeout=30).json()
+        uid = (me.get("data") or [{}])[0].get("id")
+        resp = requests.get(f"{TWITCH}/channels/followers", params={"broadcaster_id": uid, "first": limit}, headers=_twitch_headers(), timeout=30)
+        body = resp.json()
+        if not resp.ok:
+            return {"ok": False, "error": body.get("message", resp.text)}
+        items = [
+            {"id": d.get("user_id"), "text": f"{d.get('user_name')} followed", "created_at": d.get("followed_at")}
             for d in body.get("data", [])
         ]
         return {"ok": True, "items": items}

@@ -1,79 +1,159 @@
 // ~/.hermes/desktop-plugins/hermes-social/plugin.js
 // Hermes Social — multi-platform social pane (X, Reddit, Facebook, Instagram).
-// Talks to the local `social serve` backend at http://127.0.0.1:8731.
-// Secrets live in ~/.hermes/.env; the pane only ever sees JSON results.
+// Tabs: Compose · Feeds · Settings. Talks to the local `social serve` backend.
+// Secrets stay in ~/.hermes/.env / ~/.config/social/credentials.json — the pane
+// only ever sees JSON (status, verify result, post result).
 
 import React from 'react'
-import { host, cn } from '@hermes/plugin-sdk'
+import { host } from '@hermes/plugin-sdk'
 
 const ID = 'hermes-social'
 const h = React.createElement
 const API = 'http://127.0.0.1:8731'
 
 const PLATFORMS = [
-  { key: 'x', label: 'X' },
-  { key: 'reddit', label: 'Reddit' },
-  { key: 'facebook', label: 'Facebook' },
-  { key: 'instagram', label: 'Instagram' },
+  { key: 'x', label: 'X', fields: [
+    { k: 'X_API_KEY', label: 'API Key', secret: true },
+    { k: 'X_API_SECRET', label: 'API Secret', secret: true },
+    { k: 'X_BEARER_TOKEN', label: 'Bearer Token', secret: true },
+    { k: 'X_ACCESS_TOKEN', label: 'Access Token', secret: true },
+    { k: 'X_ACCESS_TOKEN_SECRET', label: 'Access Token Secret', secret: true },
+  ]},
+  { key: 'reddit', label: 'Reddit', fields: [
+    { k: 'REDDIT_CLIENT_ID', label: 'Client ID', secret: true },
+    { k: 'REDDIT_CLIENT_SECRET', label: 'Client Secret', secret: true },
+    { k: 'REDDIT_USERNAME', label: 'Username' },
+    { k: 'REDDIT_PASSWORD', label: 'Password', secret: true },
+    { k: 'REDDIT_USER_AGENT', label: 'User Agent' },
+  ]},
+  { key: 'facebook', label: 'Facebook', fields: [
+    { k: 'FB_PAGE_ACCESS_TOKEN', label: 'Page Access Token', secret: true },
+    { k: 'FB_PAGE_ID', label: 'Page ID' },
+  ]},
+  { key: 'instagram', label: 'Instagram', fields: [
+    { k: 'IG_USER_ID', label: 'Instagram User ID' },
+    { k: 'FB_PAGE_ACCESS_TOKEN', label: '(uses Facebook Page Token)', secret: true, shared: true },
+  ]},
+  { key: 'tiktok', label: 'TikTok', fields: [
+    { k: 'TIKTOK_ACCESS_TOKEN', label: 'Access Token', secret: true },
+  ]},
+  { key: 'twitch', label: 'Twitch', fields: [
+    { k: 'TWITCH_CLIENT_ID', label: 'Client ID' },
+    { k: 'TWITCH_ACCESS_TOKEN', label: 'Access Token (OAuth)', secret: true },
+  ]},
 ]
 
-// boot powered-on: status loads immediately, no "off" default
 function SocialPane({ ctx }) {
-  const [tab, setTab] = React.useState('compose')
+  const [tab, setTab] = React.useState('settings')
   const [status, setStatus] = React.useState(null)
   const [err, setErr] = React.useState(null)
 
   const loadStatus = React.useCallback(() => {
-    fetch(API + '/status')
-      .then((r) => r.json())
-      .then((d) => { setStatus(d); setErr(null) })
-      .catch((e) => setErr('Cannot reach social server — is it running? (`social serve`)'))
+    fetch(API + '/status').then((r) => r.json()).then((d) => { setStatus(d); setErr(null) })
+      .catch(() => setErr('Cannot reach social server — run `social serve` (or it auto-starts via launchd).'))
   }, [])
-
   React.useEffect(() => { loadStatus() }, [loadStatus])
 
-  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--text)', fontFamily: 'system-ui, sans-serif' } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)' } },
+  return h('div', { style: paneStyle },
+    h('div', { style: tabBarStyle },
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
+      h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
       status && h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', fontSize: 11 } },
         PLATFORMS.map((p) =>
-          h('span', { key: p.key, title: p.label, style: {
-            padding: '2px 6px', borderRadius: 6,
-            background: (status.configured || {})[p.key] ? 'rgba(34,197,94,0.18)' : 'rgba(120,120,120,0.15)',
-            color: (status.configured || {})[p.key] ? '#22c55e' : '#888',
-          } }, p.label)
+          h('span', { key: p.key, title: p.label + (status.configured && status.configured[p.key] ? ' connected' : ' not configured'),
+            style: badgeStyle(status.configured && status.configured[p.key]) }, p.label)
         )
       )
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    tab === 'compose'
-      ? h(Compose, { status })
-      : h(Feeds, { status })
+    tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
+      : tab === 'feeds' ? h(Feeds, { status })
+      : h(Settings, { status, refresh: loadStatus })
   )
 }
 
 function Tab({ active, onClick, label }) {
-  return h('button', {
-    onClick,
-    style: {
-      background: active ? 'var(--accent, #3b82f6)' : 'transparent',
-      color: active ? '#fff' : 'var(--text)',
-      border: '1px solid var(--border)', borderRadius: 8, padding: '5px 12px',
-      cursor: 'pointer', fontSize: 13, fontWeight: 600,
-    },
-  }, label)
+  return h('button', { onClick, style: {
+    background: active ? 'var(--accent, #3b82f6)' : 'transparent', color: active ? '#fff' : 'var(--text)',
+    border: '1px solid var(--border)', borderRadius: 8, padding: '5px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+  } }, label)
 }
 
-function Compose({ status }) {
+// ── Settings ──────────────────────────────────────────────────────────────────
+function Settings({ status, refresh }) {
+  const configured = (status && status.configured) || {}
+  return h('div', { style: { overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 14 } },
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'Log in per platform. Hit "Test" to make a real API call and confirm the credentials work before you post.'),
+    PLATFORMS.map((p) => h(PlatformCard, { key: p.key, p, connected: !!configured[p.key], refresh }))
+  )
+}
+
+function PlatformCard({ p, connected, refresh }) {
+  const [vals, setVals] = React.useState({})
+  const [testing, setTesting] = React.useState(false)
+  const [testRes, setTestRes] = React.useState(null)
+  const [saving, setSaving] = React.useState(false)
+  const [saved, setSaved] = React.useState(false)
+
+  const set = (k, v) => setVals((o) => ({ ...o, [k]: v }))
+
+  const save = () => {
+    setSaving(true); setSaved(false); setTestRes(null)
+    fetch(API + '/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: p.key, creds: vals }),
+    }).then((r) => r.json()).then((d) => { if (d.ok) { setSaved(true); refresh && refresh() } })
+      .catch((e) => setTestRes({ ok: false, error: String(e) }))
+      .finally(() => setSaving(false))
+  }
+
+  const test = () => {
+    setTesting(true); setTestRes(null); setSaved(false)
+    fetch(API + '/verify/' + p.key, { method: 'POST' })
+      .then((r) => r.json()).then((d) => setTestRes(d))
+      .catch((e) => setTestRes({ ok: false, error: String(e) }))
+      .finally(() => { setTesting(false); refresh && refresh() })
+  }
+
+  return h('div', { style: { border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'rgba(128,128,128,0.05)' } },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
+      h('span', { style: { fontSize: 15, fontWeight: 700 } }, p.label),
+      h('span', { style: badgeStyle(connected) }, connected ? '● connected' : '○ not set'),
+      testRes && h('span', { style: { fontSize: 11, color: testRes.ok ? '#22c55e' : '#f87171', marginLeft: 'auto' } }, testRes.ok ? '✓ verified' : '✗ failed')
+    ),
+    p.fields.map((f) =>
+      h('div', { key: f.k, style: { marginBottom: 8 } },
+        h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 3 } }, f.label),
+        h('input', {
+          type: f.secret ? 'password' : 'text', placeholder: f.shared ? 'shared with Facebook' : f.label,
+          value: vals[f.k] || '', onChange: (e) => set(f.k, e.target.value),
+          style: fieldStyle,
+        })
+      )
+    ),
+    h('div', { style: { display: 'flex', gap: 8, marginTop: 4 } },
+      h('button', { onClick: save, disabled: saving, style: btnStyle(false) }, saving ? 'Saving…' : 'Save'),
+      h('button', { onClick: test, disabled: testing, style: btnStyle(true) }, testing ? 'Testing…' : 'Test'),
+      saved && h('span', { style: { fontSize: 11, color: '#22c55e', alignSelf: 'center' } }, 'saved')
+    ),
+    testRes && !testRes.ok && h('div', { style: { marginTop: 8, fontSize: 12, color: '#f87171', wordBreak: 'break-word' } }, String(testRes.error || 'failed'))
+  )
+}
+
+// ── Compose ────────────────────────────────────────────────────────────────────
+function Compose({ status, refresh }) {
   const [platform, setPlatform] = React.useState('x')
   const [text, setText] = React.useState('')
   const [sub, setSub] = React.useState('')
   const [title, setTitle] = React.useState('')
   const [imgUrl, setImgUrl] = React.useState('')
+  const [videoUrl, setVideoUrl] = React.useState('')
+  const [channel, setChannel] = React.useState('')
+  const [twitchAction, setTwitchAction] = React.useState('chat') // 'chat' | 'title'
+  const [category, setCategory] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [result, setResult] = React.useState(null)
-
   const configured = (status && status.configured) || {}
   const disabled = !configured[platform]
 
@@ -83,98 +163,54 @@ function Compose({ status }) {
     const body = { text }
     if (platform === 'reddit') { body.subreddit = sub; body.title = title }
     if (platform === 'instagram') body.image_url = imgUrl
-    fetch(API + '/post/' + platform, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-      .then((r) => r.json())
-      .then((d) => { setResult(d); if (d.ok) setText('') })
-      .catch((e) => setResult({ ok: false, error: String(e) }))
-      .finally(() => setBusy(false))
+    if (platform === 'tiktok') body.video_url = videoUrl
+    if (platform === 'twitch') { body.action = twitchAction; if (twitchAction === 'title') body.category = category; else body.channel = channel }
+    fetch(API + '/post/' + platform, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then((r) => r.json()).then((d) => { setResult(d); if (d.ok) { setText(''); refresh && refresh() } })
+      .catch((e) => setResult({ ok: false, error: String(e) })).finally(() => setBusy(false))
   }
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, padding: 12, overflowY: 'auto' } },
     h('div', { style: { display: 'flex', gap: 6 } },
-      PLATFORMS.map((p) =>
-        h('button', {
-          key: p.key, onClick: () => setPlatform(p.key),
-          style: {
-            flex: 1, padding: '6px 0', borderRadius: 8, cursor: 'pointer',
-            border: '1px solid var(--border)',
-            background: platform === p.key ? 'var(--accent, #3b82f6)' : 'transparent',
-            color: platform === p.key ? '#fff' : (configured[p.key] ? 'var(--text)' : '#888'),
-            fontSize: 12, fontWeight: 600,
-          },
-        }, p.label)
-      )
+      PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlatform(p.key), style: platBtn(platform === p.key, configured[p.key]) }, p.label))
     ),
-    disabled && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, `⚠ ${platform} not configured — add its creds to ~/.hermes/.env`),
-    platform === 'reddit' && h('input', {
-      placeholder: 'subreddit (e.g. python)', value: sub,
-      onChange: (e) => setSub(e.target.value),
-      style: fieldStyle,
-    }),
-    platform === 'reddit' && h('input', {
-      placeholder: 'title', value: title,
-      onChange: (e) => setTitle(e.target.value),
-      style: fieldStyle,
-    }),
-    platform === 'instagram' && h('input', {
-      placeholder: 'image URL (hosted)', value: imgUrl,
-      onChange: (e) => setImgUrl(e.target.value),
-      style: fieldStyle,
-    }),
-    h('textarea', {
-      placeholder: platform === 'reddit' ? 'body text' : 'what do you want to say?',
-      value: text, onChange: (e) => setText(e.target.value), rows: 5,
-      style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' },
-    }),
+    disabled && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, `⚠ ${platform} not configured — add creds in Settings (and hit Test).`),
+    platform === 'reddit' && h('input', { placeholder: 'subreddit (e.g. python)', value: sub, onChange: (e) => setSub(e.target.value), style: fieldStyle }),
+    platform === 'reddit' && h('input', { placeholder: 'title', value: title, onChange: (e) => setTitle(e.target.value), style: fieldStyle }),
+    platform === 'instagram' && h('input', { placeholder: 'image URL (publicly hosted)', value: imgUrl, onChange: (e) => setImgUrl(e.target.value), style: fieldStyle }),
+    platform === 'tiktok' && h('input', { placeholder: 'video URL (publicly hosted)', value: videoUrl, onChange: (e) => setVideoUrl(e.target.value), style: fieldStyle }),
+    platform === 'twitch' && h('div', { style: { display: 'flex', gap: 6 } },
+      h('button', { onClick: () => setTwitchAction('chat'), style: platBtn(twitchAction === 'chat') }, 'Chat'),
+      h('button', { onClick: () => setTwitchAction('title'), style: platBtn(twitchAction === 'title') }, 'Set Title'),
+    ),
+    platform === 'twitch' && twitchAction === 'chat' && h('input', { placeholder: 'channel (optional, defaults to you)', value: channel, onChange: (e) => setChannel(e.target.value), style: fieldStyle }),
+    platform === 'twitch' && twitchAction === 'title' && h('input', { placeholder: 'category (optional)', value: category, onChange: (e) => setCategory(e.target.value), style: fieldStyle }),
+    h('textarea', { placeholder: platform === 'reddit' ? 'body text' : (platform === 'twitch' && twitchAction === 'title' ? 'new stream title' : 'what do you want to say?'), value: text, onChange: (e) => setText(e.target.value), rows: 5, style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' } }),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
-      h('button', {
-        onClick: send, disabled: busy || disabled,
-        style: {
-          padding: '8px 18px', borderRadius: 8, border: 'none', cursor: busy || disabled ? 'not-allowed' : 'pointer',
-          background: busy || disabled ? '#555' : 'var(--accent, #3b82f6)', color: '#fff', fontWeight: 600, fontSize: 13,
-        },
-      }, busy ? 'Sending…' : 'Post'),
-      text.length > 0 && h('span', { style: { fontSize: 11, color: '#888' } }, platform === 'instagram' || platform === 'facebook' ? '' : `${text.length}/280`)
+      h('button', { onClick: send, disabled: busy || disabled, style: btnStyle(false, busy || disabled) }, busy ? 'Sending…' : (platform === 'twitch' ? (twitchAction === 'title' ? 'Update' : 'Send') : 'Post')),
+      text.length > 0 && h('span', { style: { fontSize: 11, color: '#888' } }, (platform === 'instagram' || platform === 'facebook') ? '' : `${text.length}/280`)
     ),
-    result && h('div', {
-      style: {
-        padding: 10, borderRadius: 8, fontSize: 12,
-        background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)',
-        color: result.ok ? '#22c55e' : '#f87171',
-        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-      },
-    }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
+    result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)', color: result.ok ? '#22c55e' : '#f87171', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
   )
 }
 
+// ── Feeds ──────────────────────────────────────────────────────────────────────
 function Feeds({ status }) {
   const [plat, setPlat] = React.useState('all')
   const [items, setItems] = React.useState({})
   const [loading, setLoading] = React.useState(false)
   const [err, setErr] = React.useState(null)
-
-  const load = () => {
-    setLoading(true); setErr(null)
-    fetch(API + '/feeds?platform=' + plat + '&limit=8')
-      .then((r) => r.json())
-      .then((d) => setItems(d))
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false))
-  }
+  const load = () => { setLoading(true); setErr(null); fetch(API + '/feeds?platform=' + plat + '&limit=8').then((r) => r.json()).then((d) => setItems(d)).catch((e) => setErr(String(e))).finally(() => setLoading(false)) }
   React.useEffect(() => { load() }, [plat])
-
   const pmeta = {
     x: { name: 'X', field: 'text', sub: (i) => '@' + (i.author || '?') },
     reddit: { name: 'Reddit', field: 'title', sub: (i) => 'r/' + (i.subreddit || '?') + ' · ' + (i.score || 0) + '↑' },
     facebook: { name: 'Facebook', field: 'text', sub: () => '' },
     instagram: { name: 'Instagram', field: 'text', sub: () => '' },
+    tiktok: { name: 'TikTok', field: 'text', sub: (i) => i.url ? 'video' : '' },
+    twitch: { name: 'Twitch', field: 'text', sub: () => '' },
   }
-
-  const keys = plat === 'all' ? ['x', 'reddit', 'facebook', 'instagram'] : [plat]
+  const keys = plat === 'all' ? ['x', 'reddit', 'facebook', 'instagram', 'tiktok', 'twitch'] : [plat]
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
     h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)' } },
       h('button', { onClick: () => setPlat('all'), style: platBtn(plat === 'all') }, 'All'),
@@ -184,18 +220,13 @@ function Feeds({ status }) {
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
       keys.map((k) => {
-        const meta = pmeta[k]
-        const sec = items[k]
-        const list = (sec && sec.items) || []
+        const meta = pmeta[k]; const sec = items[k]; const list = (sec && sec.items) || []
         return h('div', { key: k },
-          h('div', { style: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#888', marginBottom: 4 } }, meta.name),
-          !sec && h('div', { style: { fontSize: 12, color: '#666' } }, 'loading…'),
+          h('div', { style: secTitleStyle }, meta.name),
+          !sec && h('div', { style: secBodyStyle }, 'loading…'),
           sec && !sec.ok && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ ' + (sec.error || 'not available')),
-          sec && sec.ok && list.length === 0 && h('div', { style: { fontSize: 12, color: '#666' } }, 'nothing yet'),
-          list.map((it) => h('a', {
-            key: it.id, href: it.url || '#', target: '_blank', rel: 'noreferrer',
-            style: { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--border)', textDecoration: 'none', color: 'var(--text)', background: 'rgba(128,128,128,0.06)' },
-          },
+          sec && sec.ok && list.length === 0 && h('div', { style: secBodyStyle }, 'nothing yet'),
+          list.map((it) => h('a', { key: it.id, href: it.url || '#', target: '_blank', rel: 'noreferrer', style: feedItemStyle },
             h('div', { style: { fontSize: 13, marginBottom: 4 } }, it[meta.field] || '(no text)'),
             meta.sub(it) && h('div', { style: { fontSize: 11, color: '#888' } }, meta.sub(it))
           ))
@@ -205,28 +236,39 @@ function Feeds({ status }) {
   )
 }
 
-const fieldStyle = {
-  padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)',
-  background: 'var(--bg, #111)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit',
+// ── styles ──────────────────────────────────────────────────────────────────────
+const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--text)', fontFamily: 'system-ui, sans-serif' }
+const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)' }
+const fieldStyle = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg, #111)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
+const secTitleStyle = { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#888', marginBottom: 4 }
+const secBodyStyle = { fontSize: 12, color: '#666' }
+const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--border)', textDecoration: 'none', color: 'var(--text)', background: 'rgba(128,128,128,0.06)' }
+
+function badgeStyle(on) {
+  return {
+    padding: '2px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+    background: on ? 'rgba(34,197,94,0.18)' : 'rgba(120,120,120,0.15)',
+    color: on ? '#22c55e' : '#888',
+  }
 }
-function platBtn(active) {
+function btnStyle(primary, disabled) {
+  return {
+    padding: '8px 16px', borderRadius: 8, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
+    background: disabled ? '#555' : primary ? 'var(--accent, #3b82f6)' : 'rgba(128,128,128,0.3)', color: '#fff', fontWeight: 600, fontSize: 13,
+  }
+}
+function platBtn(active, configured) {
   return {
     padding: '5px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600,
     border: '1px solid var(--border)',
     background: active ? 'var(--accent, #3b82f6)' : 'transparent',
-    color: active ? '#fff' : 'var(--text)',
+    color: active ? '#fff' : configured ? 'var(--text)' : '#888',
   }
 }
 
 export default {
   id: ID,
   register(ctx) {
-    return ctx.register({
-      id: 'pane',
-      area: 'panes',
-      title: 'Social',
-      data: { placement: 'main' },
-      render: () => h(SocialPane, { ctx }),
-    })
+    return ctx.register({ id: 'pane', area: 'panes', title: 'Social', data: { placement: 'main' }, render: () => h(SocialPane, { ctx }) })
   },
 }

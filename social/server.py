@@ -19,6 +19,7 @@ PORT = 8731
 
 
 def _status() -> dict:
+    config.reload()
     return {"ok": True, "configured": config.configured(), "version": "0.1.0"}
 
 
@@ -26,24 +27,62 @@ def _status() -> dict:
 def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     seg = path.strip("/").split("/")
     if method == "GET" and path in ("", "/"):
+        config.reload()
         return _status()
     if method == "GET" and path == "/status":
+        config.reload()
         return _status()
     if method == "GET" and path == "/feeds":
+        config.reload()
         limit = int(params.get("limit", ["10"])[0])
         platform = params.get("platform", ["all"])[0]
         return _feeds(platform, limit)
+    if method == "POST" and seg and seg[0] == "verify":
+        config.reload()
+        plat = seg[1] if len(seg) > 1 else body.get("platform")
+        return _verify(plat)
+    if method == "POST" and seg and seg[0] == "settings":
+        config.reload()
+        platform = body.get("platform")
+        return {"ok": True, "configured": config.save_credentials(platform, body.get("creds", {}))}
     if method == "POST" and seg and seg[0] == "post":
         platform = seg[1] if len(seg) > 1 else body.get("platform", "x")
         return _post(platform, body)
     if method == "POST" and seg and seg[0] == "reply":
         platform = seg[1] if len(seg) > 1 else body.get("platform")
         return _reply(platform, body)
+    if method == "POST" and seg and seg[0] == "chat":
+        plat = seg[1] if len(seg) > 1 else body.get("platform")
+        if plat == "twitch":
+            return platforms.twitch_chat(body.get("text", ""), channel=body.get("channel", ""))
+        return {"ok": False, "error": f"chat not supported for {plat}"}
+    if method == "POST" and seg and seg[0] == "settitle":
+        plat = seg[1] if len(seg) > 1 else body.get("platform")
+        if plat == "twitch":
+            return platforms.twitch_set_title(body.get("title", ""), category=body.get("category", ""))
+        return {"ok": False, "error": f"settitle not supported for {plat}"}
     if method == "POST" and seg and seg[0] == "like":
         return _act("like", seg, body)
     if method == "POST" and seg and seg[0] == "retweet":
         return _act("retweet", seg, body)
     return {"ok": False, "error": "no such route", "path": path}
+
+
+def _verify(platform: str) -> dict:
+    """Live credential check — actually calls the API with current creds."""
+    if platform == "x":
+        return platforms.x_verify()
+    if platform == "reddit":
+        return platforms.reddit_verify()
+    if platform == "facebook":
+        return platforms.fb_verify()
+    if platform == "instagram":
+        return platforms.ig_verify()
+    if platform == "tiktok":
+        return platforms.tt_verify()
+    if platform == "twitch":
+        return platforms.twitch_verify()
+    return {"ok": False, "error": f"unknown platform {platform}"}
 
 
 def _feeds(platform: str, limit: int) -> dict:
@@ -56,6 +95,10 @@ def _feeds(platform: str, limit: int) -> dict:
         out["facebook"] = platforms.fb_feeds(limit)
     if platform in ("all", "instagram"):
         out["instagram"] = platforms.ig_feeds(limit)
+    if platform in ("all", "tiktok"):
+        out["tiktok"] = platforms.tt_feeds(limit)
+    if platform in ("all", "twitch"):
+        out["twitch"] = platforms.twitch_feeds(limit)
     return out
 
 
@@ -74,6 +117,13 @@ def _post(platform: str, body: dict) -> dict:
         return platforms.fb_post(body.get("text", ""))
     if platform == "instagram":
         return platforms.ig_post(body.get("image_url", ""), caption=body.get("text", ""))
+    if platform == "tiktok":
+        return platforms.tt_post(body.get("video_url", ""), caption=body.get("text", ""))
+    if platform == "twitch":
+        # Compose tab sends a chat/title action; default to chat.
+        if body.get("action") == "title":
+            return platforms.twitch_set_title(body.get("text", ""), category=body.get("category", ""))
+        return platforms.twitch_chat(body.get("text", ""), channel=body.get("channel", ""))
     return {"ok": False, "error": f"unknown platform {platform}"}
 
 
