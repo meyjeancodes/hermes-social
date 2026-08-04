@@ -41,6 +41,7 @@ const PLATFORMS = [
     { k: 'X_BEARER_TOKEN', label: 'Bearer Token', secret: true },
     { k: 'X_ACCESS_TOKEN', label: 'Access Token', secret: true },
     { k: 'X_ACCESS_TOKEN_SECRET', label: 'Access Token Secret', secret: true },
+    { k: 'X_USERNAME', label: '@username (for embedded timeline)' },
   ]},
   { key: 'reddit', label: 'Reddit', fields: [
     { k: 'REDDIT_CLIENT_ID', label: 'Client ID', secret: true },
@@ -290,12 +291,18 @@ function Feeds({ status, refresh }) {
   const [items, setItems] = React.useState({})
   const [loading, setLoading] = React.useState(false)
   const [err, setErr] = React.useState(null)
+  const configured = (status && status.configured) || {}
+  const xUser = (status && status.meta && status.meta.x_username) || ''
   const load = () => {
-    setLoading(true); setErr(null)
-    const q = 'platform=' + plat + '&limit=12' + (plat === 'x' || plat === 'all' ? '&feed=' + feed : '')
-    fetch(API + '/feeds?' + q).then((r) => r.json()).then((d) => setItems(d)).catch((e) => setErr(String(e))).finally(() => setLoading(false))
+    if (plat !== 'x' && plat !== 'all') { // X embed needs no API fetch
+      setLoading(true); setErr(null)
+      const q = 'platform=' + plat + '&limit=12'
+      fetch(API + '/feeds?' + q).then((r) => r.json()).then((d) => setItems(d)).catch((e) => setErr(String(e))).finally(() => setLoading(false))
+    } else {
+      setItems({})
+    }
   }
-  React.useEffect(() => { load() }, [plat, feed])
+  React.useEffect(() => { load() }, [plat])
   const pmeta = {
     x: { name: 'X', field: 'text', sub: (i) => '@' + (i.author || '?'), dot: (i) => i.author_name },
     reddit: { name: 'Reddit', field: 'title', sub: (i) => 'r/' + (i.subreddit || '?') + ' · ' + (i.score || 0) + '↑' },
@@ -308,20 +315,33 @@ function Feeds({ status, refresh }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
     h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' } },
       h('button', { onClick: () => setPlat('all'), style: platBtn(plat === 'all') }, 'All'),
-      ...PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlat(p.key), style: platBtn(plat === p.key) }, p.label)),
+      ...PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlat(p.key), style: platBtn(plat === p.key, configured[p.key]) }, p.label)),
+    ),
+    (plat === 'all' || plat === 'x') && h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', borderBottom: '1px solid var(--border)', alignItems: 'center', flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 11, color: '#888' } }, 'X feed:'),
+      h('button', { onClick: () => setFeed('embed'), style: platBtn(feed === 'embed') }, 'Timeline'),
+      h('button', { onClick: () => setFeed('home'), style: platBtn(feed === 'home') }, 'Home*'),
+      h('button', { onClick: () => setFeed('foryou'), style: platBtn(feed === 'foryou') }, 'For You*'),
+      h('button', { onClick: () => setFeed('mentions'), style: platBtn(feed === 'mentions') }, 'Mentions'),
       h('button', { onClick: load, disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh')
     ),
-    (plat === 'all' || plat === 'x') && h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', borderBottom: '1px solid var(--border)', alignItems: 'center' } },
-      h('span', { style: { fontSize: 11, color: '#888' } }, 'X feed:'),
-      h('button', { onClick: () => setFeed('home'), style: platBtn(feed === 'home') }, 'Home'),
-      h('button', { onClick: () => setFeed('foryou'), style: platBtn(feed === 'foryou') }, 'For You*'),
-      h('button', { onClick: () => setFeed('mentions'), style: platBtn(feed === 'mentions') }, 'Mentions')
-    ),
-    (plat === 'all' || plat === 'x') && feed === 'foryou' && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#a78bfa' } }, '* X has no official For You API — this merges your Home + Mentions as a best-effort feed.'),
+    (plat === 'all' || plat === 'x') && feed === 'foryou' && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#a78bfa' } }, '* API reads need a paid X tier — these open the real X site.'),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
       keys.map((k) => {
         const meta = pmeta[k]; const sec = items[k]; const list = (sec && sec.items) || []
+        // X: real embed timeline (no API cost) when a username is set
+        if (k === 'x' && (plat === 'all' || plat === 'x') && feed === 'embed') {
+          return h('div', { key: k },
+            h('div', { style: secTitleStyle }, 'X — Timeline'),
+            xUser ? h(XTimeline, { username: xUser })
+              : h(XTimeline, { username: 'blackcatrobotics' })
+          )
+        }
+        // unconfigured, no real error -> compact chip (declutter)
+        if (!configured[k] && !(sec && !sec.ok && !xFreeTier(sec.error))) {
+          return h(ConfigChip, { key: k, label: meta.name })
+        }
         return h('div', { key: k },
           h('div', { style: secTitleStyle }, meta.name),
           !sec && h('div', { style: secBodyStyle }, 'loading…'),
@@ -333,6 +353,42 @@ function Feeds({ status, refresh }) {
         )
       })
     )
+  )
+}
+
+function ConfigChip({ label }) {
+  return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--border)', fontSize: 12, color: '#888' } },
+    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: '#555', display: 'inline-block' } }),
+    label + ' — add creds in Settings to activate'
+  )
+}
+
+// Real X timeline via the official Twitter embed widget (no API key, no cost).
+function XTimeline({ username }) {
+  const ref = React.useRef(null)
+  React.useEffect(() => {
+    const id = 'twttr-wjs'
+    if (!document.getElementById(id)) {
+      const s = document.createElement('script')
+      s.id = id; s.src = 'https://platform.twitter.com/widgets.js'; s.async = true
+      document.body.appendChild(s)
+    }
+    const render = () => {
+      if (window.twttr && window.twttr.widgets && ref.current) {
+        ref.current.innerHTML = ''
+        window.twttr.widgets.createTimeline(
+          { sourceType: 'profile', screenName: username },
+          ref.current,
+          { height: 600, theme: 'dark' }
+        )
+      } else {
+        setTimeout(render, 300)
+      }
+    }
+    render()
+  }, [username])
+  return h('div', { ref, style: { minHeight: 200 } },
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'Loading @' + username + ' timeline…')
   )
 }
 

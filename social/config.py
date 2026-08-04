@@ -21,7 +21,7 @@ X_CLI_ENV = Path(os.path.expanduser("~/.config/x-cli/.env"))  # symlink -> ~/.he
 SOCIAL_CFG = Path(os.path.expanduser("~/.config/social/credentials.json"))
 
 # which env keys each platform's Settings form manages
-X_KEYS = ["X_API_KEY", "X_API_SECRET", "X_BEARER_TOKEN", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"]
+X_KEYS = ["X_API_KEY", "X_API_SECRET", "X_BEARER_TOKEN", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET", "X_USERNAME"]
 REDDIT_KEYS = ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD", "REDDIT_USER_AGENT"]
 FB_KEYS = ["FB_PAGE_ACCESS_TOKEN", "FB_PAGE_ID"]
 IG_KEYS = ["FB_PAGE_ACCESS_TOKEN", "IG_USER_ID"]

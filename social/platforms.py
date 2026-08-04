@@ -237,23 +237,54 @@ def reddit_reply(thing_id: str, text: str) -> Dict[str, Any]:
 
 
 def reddit_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]:
+    # Prefer authenticated reads (works for front page / multireddits), but fall
+    # back to Reddit's PUBLIC json API (no creds needed) so feeds always show.
     try:
         r = _reddit()
         src = r.subreddit(subreddit).hot(limit=limit) if subreddit else r.front.hot(limit=limit)
-        items = []
-        for s in src:
-            items.append(
-                {
-                    "id": str(s.id),
-                    "author": str(s.author) if s.author else None,
-                    "subreddit": str(s.subreddit),
-                    "title": s.title,
-                    "score": s.score,
-                    "num_comments": s.num_comments,
-                    "url": f"https://reddit.com{s.permalink}",
-                }
-            )
+        items = [_reddit_item(s) for s in src]
         return {"ok": True, "items": items}
+    except Exception:
+        return _reddit_public_feeds(limit, subreddit)
+
+
+def _reddit_item(s) -> Dict[str, Any]:
+    return {
+        "id": str(s.id),
+        "author": str(s.author) if s.author else None,
+        "subreddit": str(s.subreddit),
+        "title": s.title,
+        "score": s.score,
+        "num_comments": s.num_comments,
+        "url": f"https://reddit.com{s.permalink}",
+    }
+
+
+def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]:
+    """Reads without auth via Reddit's public .json endpoint — works on the free web."""
+    try:
+        sub = subreddit or "popular"
+        resp = requests.get(
+            f"https://www.reddit.com/r/{sub}/hot.json",
+            params={"limit": limit},
+            headers={"User-Agent": "hermes-social/0.1"},
+            timeout=30,
+        )
+        if not resp.ok:
+            return {"ok": False, "error": f"Reddit public feed HTTP {resp.status_code}"}
+        items = [
+            {
+                "id": d["id"],
+                "author": d.get("author"),
+                "subreddit": d.get("subreddit"),
+                "title": d.get("title"),
+                "score": d.get("score"),
+                "num_comments": d.get("num_comments"),
+                "url": f"https://reddit.com{d.get('permalink')}",
+            }
+            for d in resp.json().get("data", {}).get("children", [])
+        ]
+        return {"ok": True, "items": items, "public": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

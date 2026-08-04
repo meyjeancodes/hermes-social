@@ -20,7 +20,7 @@ PORT = 8731
 
 def _status() -> dict:
     config.reload()
-    return {"ok": True, "configured": config.configured(), "version": "0.1.0"}
+    return {"ok": True, "configured": config.configured(), "meta": {"x_username": config.get("X_USERNAME")}, "version": "0.1.0"}
 
 
 # route table: (method, path) -> callable(body_dict, params) -> dict
