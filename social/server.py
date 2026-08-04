@@ -36,7 +36,8 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
         config.reload()
         limit = int(params.get("limit", ["10"])[0])
         platform = params.get("platform", ["all"])[0]
-        return _feeds(platform, limit)
+        feed = params.get("feed", [""])[0]
+        return _feeds(platform, limit, feed)
     if method == "POST" and seg and seg[0] == "verify":
         config.reload()
         plat = seg[1] if len(seg) > 1 else body.get("platform")
@@ -85,10 +86,10 @@ def _verify(platform: str) -> dict:
     return {"ok": False, "error": f"unknown platform {platform}"}
 
 
-def _feeds(platform: str, limit: int) -> dict:
+def _feeds(platform: str, limit: int, feed: str = "") -> dict:
     out: dict = {"ok": True}
     if platform in ("all", "x"):
-        out["x"] = platforms.x_feeds(limit)
+        out["x"] = platforms.x_feeds(limit, feed=feed or "home")
     if platform in ("all", "reddit"):
         out["reddit"] = platforms.reddit_feeds(limit, subreddit=_get("subreddit"))
     if platform in ("all", "facebook"):

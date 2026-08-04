@@ -96,23 +96,90 @@ def x_retweet(tweet_id: str) -> Dict[str, Any]:
     return _x_cli(["retweet", tweet_id])
 
 
-def x_feeds(limit: int = 10) -> Dict[str, Any]:
-    mentions = _x_cli(["me", "mentions", "--max", str(limit)])
-    if not mentions.get("ok"):
-        return mentions
-    data = mentions.get("data")
-    items = data if isinstance(data, list) else (data.get("data") if isinstance(data, dict) else [])
-    out = []
-    for it in items or []:
-        out.append(
-            {
-                "id": str(it.get("id")),
-                "author": (it.get("author") or {}).get("username") if isinstance(it.get("author"), dict) else it.get("author"),
-                "text": it.get("text"),
-                "created_at": it.get("created_at"),
-            }
-        )
-    return {"ok": True, "items": out}
+# Native X client (OAuth 1.0a) — used for timeline reads that x-cli doesn't expose.
+# x-cli only has me/tweet/like/retweet/user, so Home/For-You feeds call the API directly.
+# requests_oauthlib is imported lazily inside _x_oauth so a missing dep doesn't crash server start.
+X_API = "https://api.twitter.com/2"
+
+
+def _x_oauth():
+    from requests_oauthlib import OAuth1
+
+    return OAuth1(
+        config.get("X_API_KEY"),
+        config.get("X_API_SECRET"),
+        config.get("X_ACCESS_TOKEN"),
+        config.get("X_ACCESS_TOKEN_SECRET"),
+    )
+
+
+def _x_uid() -> str:
+    """Resolve the authenticated user's numeric id (needed for timeline endpoints)."""
+    r = requests.get(f"{X_API}/users/me", auth=_x_oauth(), timeout=30)
+    if not r.ok:
+        raise RuntimeError(f"X API error (HTTP {r.status_code}): {r.text}")
+    return r.json()["data"]["id"]
+
+
+def _x_timeline(kind: str, uid: str, limit: int) -> Dict[str, Any]:
+    """kind: 'home' (reverse-chronological following) or 'mentions'.
+
+    NOTE: X's real 'For You' algorithmic feed is NOT available via any API tier.
+    We synthesize a best-effort 'foryou' from home + mentions and label it clearly.
+    Home requires a paid tier (Free returns 403)."""
+    params = {
+        "max_results": min(limit, 100),
+        "tweet.fields": "created_at,author_id,public_metrics,text",
+        "expansions": "author_id",
+        "user.fields": "username,name,profile_image_url",
+    }
+    if kind == "mentions":
+        url = f"{X_API}/users/{uid}/mentions"
+    else:  # home
+        url = f"{X_API}/users/{uid}/timelines/reverse_chronological"
+    r = requests.get(url, params=params, auth=_x_oauth(), timeout=30)
+    if not r.ok:
+        return {"ok": False, "error": f"X API error (HTTP {r.status_code}): {r.text[:300]}"}
+    body = r.json()
+    users = {u["id"]: u for u in body.get("includes", {}).get("users", [])}
+    items = []
+    for t in body.get("data", []):
+        u = users.get(t.get("author_id"), {})
+        items.append({
+            "id": str(t.get("id")),
+            "author": u.get("username"),
+            "author_name": u.get("name"),
+            "text": t.get("text"),
+            "created_at": t.get("created_at"),
+            "url": f"https://x.com/{u.get('username', 'i')}/status/{t.get('id')}",
+            "metrics": t.get("public_metrics", {}),
+        })
+    return {"ok": True, "items": items}
+
+
+def x_feeds(limit: int = 10, feed: str = "home") -> Dict[str, Any]:
+    """feed: 'home' | 'mentions' | 'foryou' (best-effort synthetic)."""
+    try:
+        uid = _x_uid()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if feed == "mentions":
+        return _x_timeline("mentions", uid, limit)
+    if feed == "foryou":
+        # Best-effort: merge home + mentions, label clearly in the UI.
+        home = _x_timeline("home", uid, limit)
+        if not home.get("ok"):
+            return home
+        men = _x_timeline("mentions", uid, min(limit, 10))
+        seen = set()
+        merged = []
+        for it in (home.get("items", []) + (men.get("items", []) if men.get("ok") else [])):
+            if it["id"] in seen:
+                continue
+            seen.add(it["id"])
+            merged.append(it)
+        return {"ok": True, "items": merged[:limit], "synthetic": True}
+    return _x_timeline("home", uid, limit)
 
 
 # ───────────────────────────────── Reddit ────────────────────────────────────
