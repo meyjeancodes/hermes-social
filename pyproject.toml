@@ -1,0 +1,17 @@
+[project]
+name = "hermes-social"
+version = "0.1.0"
+description = "Unified multi-platform social client for Hermes (X, Reddit, Facebook, Instagram)"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.28", "praw>=8.0"]
+
+[project.scripts]
+social = "social.cli:main"
+social-serve = "social.server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["social*"]
