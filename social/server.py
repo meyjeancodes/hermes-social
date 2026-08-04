@@ -49,6 +49,9 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     if method == "POST" and seg and seg[0] == "post":
         platform = seg[1] if len(seg) > 1 else body.get("platform", "x")
         return _post(platform, body)
+    if method == "POST" and seg and seg[0] == "mass":
+        config.reload()
+        return _mass_post(body)
     if method == "POST" and seg and seg[0] == "reply":
         platform = seg[1] if len(seg) > 1 else body.get("platform")
         return _reply(platform, body)
@@ -107,6 +110,45 @@ def _get(key: str, default: str = "") -> str:
     import os
 
     return os.environ.get(key, default)
+
+
+def _mass_post(body: dict) -> dict:
+    """Fan a draft out to every selected, configured platform.
+    Uses the API where it works; for X on the free tier (API blocked), returns a
+    share-intent link so the user can click-to-post on x.com. Returns per-platform
+    results."""
+    import urllib.parse
+
+    text = body.get("text", "")
+    platforms_sel = body.get("platforms", []) or []
+    results = {}
+    for p in platforms_sel:
+        try:
+            if p == "x":
+                r = platforms.x_post(text)
+                if not r.get("ok") and platforms.x_free_tier(str(r.get("error", ""))):
+                    results[p] = {
+                        "ok": False,
+                        "link": platforms.x_share_link(text),
+                        "note": "X Free tier blocks API posting — open this link to post on x.com",
+                    }
+                else:
+                    results[p] = r
+            elif p == "reddit":
+                results[p] = platforms.reddit_post(body.get("subreddit", ""), body.get("title", ""), text=text, url=body.get("url", ""))
+            elif p == "facebook":
+                results[p] = platforms.fb_post(text)
+            elif p == "instagram":
+                results[p] = platforms.ig_post(body.get("image_url", ""), caption=text)
+            elif p == "tiktok":
+                results[p] = platforms.tt_post(body.get("video_url", ""), caption=text)
+            elif p == "twitch":
+                results[p] = platforms.twitch_chat(text, channel=body.get("channel", ""))
+            else:
+                results[p] = {"ok": False, "error": f"unknown platform {p}"}
+        except Exception as e:
+            results[p] = {"ok": False, "error": str(e)}
+    return {"ok": True, "results": results}
 
 
 def _post(platform: str, body: dict) -> dict:

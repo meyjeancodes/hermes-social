@@ -95,6 +95,7 @@ function SocialPane() {
     h('div', { style: tabBarStyle },
       h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
+      h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
       h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', fontSize: 11, color: '#888' } },
         h('span', { style: { marginRight: 4 } }, nConn + '/' + PLATFORMS.length),
@@ -107,6 +108,7 @@ function SocialPane() {
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
+      : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
       : h(Settings, { status, refresh: loadStatus })
   )
 }
@@ -235,6 +237,49 @@ function Compose({ status, refresh }) {
       text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? '#f87171' : '#888' } }, `${text.length}/280`),
     ),
     result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)', color: result.ok ? '#22c55e' : '#f87171', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
+  )
+}
+
+// ── Mass Post ──────────────────────────────────────────────────────────────────
+function MassPost({ status, refresh }) {
+  const configured = (status && status.configured) || {}
+  const allConn = PLATFORMS.filter((p) => configured[p.key]).map((p) => p.key)
+  const [text, setText] = React.useState('')
+  const [sel, setSel] = React.useState({})
+  const [busy, setBusy] = React.useState(false)
+  const [results, setResults] = React.useState(null)
+  const over = text.length > 280
+  const chosen = allConn.filter((k) => sel[k])
+
+  const toggle = (k) => setSel((o) => ({ ...o, [k]: !o[k] }))
+
+  const blast = () => {
+    if (busy || !text.trim() || chosen.length === 0) return
+    setBusy(true); setResults(null)
+    fetch(API + '/mass', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, platforms: chosen }) })
+      .then((r) => r.json()).then((d) => { setResults(d.results || {}); refresh && refresh() })
+      .catch((e) => setResults({ _err: String(e) })).finally(() => setBusy(false))
+  }
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, padding: 12, overflowY: 'auto' } },
+    h('textarea', { placeholder: 'One draft — posted to every platform you pick below.', value: text, onChange: (e) => setText(e.target.value), rows: 4, style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' } }),
+    text.length > 0 && h('div', { style: { fontSize: 11, color: over ? '#f87171' : '#888' } }, `${text.length}/280`),
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'Post to:'),
+    allConn.length === 0 && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, 'No platforms connected yet — add creds in Settings (and hit Test).'),
+    h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+      allConn.map((k) => h('button', { key: k, onClick: () => toggle(k), style: platBtn(sel[k], true) }, PLATFORMS.find((p) => p.key === k).label))
+    ),
+    h('button', { onClick: blast, disabled: busy || !text.trim() || chosen.length === 0, style: btnStyle(false, busy || !text.trim() || chosen.length === 0) }, busy ? 'Posting…' : `Post to ${chosen.length || 0} platform${chosen.length === 1 ? '' : 's'}`),
+    results && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
+      Object.entries(results).map(([k, v]) =>
+        h('div', { key: k, style: { padding: 10, borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid var(--border)' } },
+          h('div', { style: { fontWeight: 600, marginBottom: 2 } }, PLATFORMS.find((p) => p.key === k) ? PLATFORMS.find((p) => p.key === k).label : k),
+          v.ok && h('div', { style: { color: '#22c55e' } }, '✓ ' + (v.url || v.id || 'Posted')),
+          v.ok === false && v.link && h('a', { href: v.link, target: '_blank', rel: 'noreferrer', style: { color: '#60a5fa', textDecoration: 'none' } }, '↗ ' + (v.note || 'Open to post on X')),
+          v.ok === false && !v.link && h('div', { style: { color: '#f87171', wordBreak: 'break-word' } }, '✗ ' + (v.error || 'failed')),
+        )
+      )
+    )
   )
 }
 

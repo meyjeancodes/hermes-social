@@ -13,7 +13,8 @@ read feeds, compose, and post, with a per-platform **Settings** tab that makes a
 | Tab       | Capability |
 |-----------|------------|
 | **Feeds** | Read per platform. X has **Home / For You\* / Mentions**; Reddit hot; FB/IG posts; TikTok videos; Twitch followers. |
-| **Compose** | Post/reply/chat per platform (X, Reddit, FB, IG, TT, Twitch chat/title). |
+| **Compose** | Post/reply/chat per platform (X, Reddit, FB, IG, TT, Twitch chat/title). X also has an "Open composer ↗" share-intent link. |
+| **Mass Post** | Write **one draft**, pick connected platforms, blast at once. Posts via API where possible; for X on the free tier it returns a prefilled x.com compose link. |
 | **Settings** | Paste creds → **Save** → **Test** (live API call). Green = ready. |
 
 \* X's real "For You" algorithmic feed isn't available via any API tier. Our
@@ -71,7 +72,15 @@ full per-platform key list and where to get each one.
 - **Others** → `~/.config/social/credentials.json`
 
 > **X note:** timeline reads (Home) and posting require a **paid API tier**
-> (Basic, $100/mo). The Free tier returns `402 credits depleted` / `403`.
+> (Basic, $100/mo). The Free tier returns `402 credits depleted` / `403`. Until
+> then, the hub opens the real X site for you (Home / Notifications / Compose).
+
+## Mass Post (one draft → many platforms)
+
+Open the **Mass Post** tab, write one message, tick the connected platforms, and
+blast. The backend (`POST /mass`) posts via each platform's API where it can; for
+**X on the free tier** (API reads/posts are paid-only) it returns a **prefilled
+`x.com/intent/tweet` link** you click to post on X itself. No API cost, works today.
 
 ## License
 

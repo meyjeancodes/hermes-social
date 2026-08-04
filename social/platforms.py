@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from typing import Any, Dict, List
 
@@ -180,6 +181,18 @@ def x_feeds(limit: int = 10, feed: str = "home") -> Dict[str, Any]:
             merged.append(it)
         return {"ok": True, "items": merged[:limit], "synthetic": True}
     return _x_timeline("home", uid, limit)
+
+
+def x_free_tier(err: str) -> bool:
+    """True when an X API error is the free-tier block (reads/posts need paid)."""
+    return bool(err) and bool(re.search(r"402|credits depleted|403|not authorized|Forbidden", err))
+
+
+def x_share_link(text: str) -> str:
+    """X compose intent with the draft prefilled — used when the API is blocked."""
+    from urllib.parse import quote
+
+    return "https://x.com/intent/tweet?text=" + quote(text or "")
 
 
 # ───────────────────────────────── Reddit ────────────────────────────────────
