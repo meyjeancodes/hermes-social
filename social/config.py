@@ -82,7 +82,8 @@ def configured() -> Dict[str, bool]:
     ig = bool(get("FB_PAGE_ACCESS_TOKEN") and get("IG_USER_ID"))
     tt = bool(get("TIKTOK_ACCESS_TOKEN"))
     twitch = bool(get("TWITCH_CLIENT_ID") and get("TWITCH_ACCESS_TOKEN"))
-    return {"x": x, "reddit": reddit, "facebook": fb, "instagram": ig, "tiktok": tt, "twitch": twitch}
+    hn = True  # Hacker News is public — always available
+    return {"x": x, "reddit": reddit, "facebook": fb, "instagram": ig, "tiktok": tt, "twitch": twitch, "hn": hn}
 
 
 # ── saving (used by the Settings tab via POST /settings) ──────────────────────

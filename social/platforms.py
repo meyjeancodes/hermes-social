@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
 
 import requests
@@ -261,29 +262,61 @@ def _reddit_item(s) -> Dict[str, Any]:
 
 
 def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]:
-    """Reads without auth via Reddit's public .json endpoint — works on the free web."""
+    """Reads without auth via Reddit's public RSS feed (the JSON API is 403 now,
+    but .rss still works). No creds needed — fills the Feeds tab with real posts."""
     try:
         sub = subreddit or "popular"
         resp = requests.get(
-            f"https://www.reddit.com/r/{sub}/hot.json",
+            f"https://www.reddit.com/r/{sub}/.rss",
             params={"limit": limit},
             headers={"User-Agent": "hermes-social/0.1"},
             timeout=30,
         )
         if not resp.ok:
-            return {"ok": False, "error": f"Reddit public feed HTTP {resp.status_code}"}
-        items = [
-            {
-                "id": d["id"],
-                "author": d.get("author"),
-                "subreddit": d.get("subreddit"),
+            return {"ok": False, "error": f"Reddit RSS HTTP {resp.status_code}"}
+        root = ET.fromstring(resp.text)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        items = []
+        for e in root.findall(".//atom:entry", ns)[:limit]:
+            title = (e.findtext("atom:title", default="", namespaces=ns) or "").strip()
+            link_el = e.find("atom:link", ns)
+            link = (link_el.attrib.get("href") if link_el is not None else "") or ""
+            author_el = e.find("atom:author/atom:name", ns)
+            author = (author_el.text if author_el is not None else "") or ""
+            if author.startswith("/u/"):
+                author = author[3:]
+            content = e.findtext("atom:content", default="", namespaces=ns) or ""
+            sc = re.search(r"(\d+)\s*points?", content)
+            cm = re.search(r"(\d+)\s*comments?", content)
+            items.append({
+                "id": (e.findtext("atom:id", default="", namespaces=ns) or "").split("/")[-1],
+                "author": author,
+                "subreddit": sub,
+                "title": title,
+                "score": int(sc.group(1)) if sc else None,
+                "num_comments": int(cm.group(1)) if cm else None,
+                "url": link,
+            })
+        return {"ok": True, "items": items, "public": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def hn_feeds(limit: int = 10) -> Dict[str, Any]:
+    """Hacker News top stories — free, no-auth Firebase API. Bonus content source."""
+    try:
+        ids = requests.get("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=30).json()[:limit]
+        items = []
+        for i in ids:
+            d = requests.get(f"https://hacker-news.firebaseio.com/v0/item/{i}.json", timeout=30).json() or {}
+            items.append({
+                "id": str(d.get("id", i)),
+                "author": d.get("by"),
                 "title": d.get("title"),
                 "score": d.get("score"),
-                "num_comments": d.get("num_comments"),
-                "url": f"https://reddit.com{d.get('permalink')}",
-            }
-            for d in resp.json().get("data", {}).get("children", [])
-        ]
+                "num_comments": d.get("descendants"),
+                "url": d.get("url") or f"https://news.ycombinator.com/item?id={i}",
+            })
         return {"ok": True, "items": items, "public": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}

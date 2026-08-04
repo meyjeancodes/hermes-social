@@ -103,6 +103,8 @@ def _feeds(platform: str, limit: int, feed: str = "") -> dict:
         out["tiktok"] = platforms.tt_feeds(limit)
     if platform in ("all", "twitch"):
         out["twitch"] = platforms.twitch_feeds(limit)
+    if platform in ("all", "hn"):
+        out["hn"] = platforms.hn_feeds(limit)
     return out
 
 

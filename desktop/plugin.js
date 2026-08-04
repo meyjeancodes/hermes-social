@@ -65,6 +65,7 @@ const PLATFORMS = [
     { k: 'TWITCH_CLIENT_ID', label: 'Client ID' },
     { k: 'TWITCH_ACCESS_TOKEN', label: 'Access Token (OAuth)', secret: true },
   ]},
+  { key: 'hn', label: 'Hacker News', fields: [], public: true },
 ]
 
 function ago(iso) {
@@ -310,8 +311,9 @@ function Feeds({ status, refresh }) {
     instagram: { name: 'Instagram', field: 'text', sub: () => '' },
     tiktok: { name: 'TikTok', field: 'text', sub: (i) => i.url ? 'video' : '' },
     twitch: { name: 'Twitch', field: 'text', sub: () => '' },
+    hn: { name: 'Hacker News', field: 'title', sub: (i) => '▲ ' + (i.score ?? 0) + ' · ' + (i.num_comments ?? 0) + ' comments' },
   }
-  const keys = plat === 'all' ? ['x', 'reddit', 'facebook', 'instagram', 'tiktok', 'twitch'] : [plat]
+  const keys = plat === 'all' ? ['x', 'reddit', 'facebook', 'instagram', 'tiktok', 'twitch', 'hn'] : [plat]
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
     h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' } },
       h('button', { onClick: () => setPlat('all'), style: platBtn(plat === 'all') }, 'All'),
