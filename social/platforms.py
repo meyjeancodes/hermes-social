@@ -45,12 +45,30 @@ def _x_cli(args: List[str]) -> Dict[str, Any]:
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "x-cli timed out"}
     out = proc.stdout.strip()
-    err = proc.stderr.strip()
+    err = (proc.stderr.strip() or out)  # x-cli prints errors to stdout
     if proc.returncode != 0:
-        # x-cli prints a full Python traceback on API errors; surface the
-        # concise error line, not the stack, so the UI stays readable.
-        err_line = err.splitlines()[-1] if err else f"x-cli exited {proc.returncode}"
-        return {"ok": False, "error": err_line}
+        # x-cli prints a full Python traceback on API errors. Extract the
+        # meaningful line (the RuntimeError/API error), not the stack, so the
+        # UI stays readable. Fall back to the last non-empty line.
+        msg = ""
+        lines = err.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip().startswith("RuntimeError:"):
+                # real raised message, e.g. "RuntimeError: API error (HTTP 401): {...}"
+                msg = line.strip()
+                break
+        if not msg:
+            # fall back: line that literally contains the API error text
+            for line in lines:
+                if "API error (HTTP" in line:
+                    msg = line.strip(); break
+        if not msg:
+            for line in lines:
+                if "Error" in line:
+                    msg = line.strip(); break
+        if not msg:
+            msg = lines[-1].strip() if lines else f"x-cli exited {proc.returncode}"
+        return {"ok": False, "error": msg}
     try:
         return {"ok": True, "data": json.loads(out)}
     except json.JSONDecodeError:
