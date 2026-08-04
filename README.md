@@ -12,7 +12,7 @@ read feeds, compose, and post, with a per-platform **Settings** tab that makes a
 
 | Tab       | Capability |
 |-----------|------------|
-| **Feeds** | Read per platform. X has **Home / For You\* / Mentions**; Reddit hot; FB/IG posts; TikTok videos; Twitch followers. |
+| **Feeds** | Read per platform. **X** shows a real embedded timeline (official widget, no API). **Reddit** shows real hot posts via public RSS. **Hacker News** shows top stories (free API). FB/IG/TikTok/Twitch need creds (API-gated). |
 | **Compose** | Post/reply/chat per platform (X, Reddit, FB, IG, TT, Twitch chat/title). X also has an "Open composer ↗" share-intent link. |
 | **Mass Post** | Write **one draft**, pick connected platforms, blast at once. Posts via API where possible; for X on the free tier it returns a prefilled x.com compose link. |
 | **Settings** | Paste creds → **Save** → **Test** (live API call). Green = ready. |
