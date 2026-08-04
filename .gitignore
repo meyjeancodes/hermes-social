@@ -1,8 +1,14 @@
 .venv/
 __pycache__/
 *.pyc
-serve.log
 *.egg-info/
 dist/
 build/
+serve.log
+.env
+credentials.json
 .DS_Store
+
+# never commit real secrets
+*.env
+*secrets*

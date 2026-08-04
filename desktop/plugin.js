@@ -12,6 +12,28 @@ const ID = 'hermes-social'
 const h = React.createElement
 const API = 'http://127.0.0.1:8731'
 
+// X free-tier workaround: the API can't read timelines or post without a paid
+// plan, so we route to the real X site instead. The share intent prefills the
+// draft text — one click and the user posts on x.com itself.
+function xIntent(text) {
+  return 'https://x.com/intent/tweet?text=' + encodeURIComponent(text || '')
+}
+function xFreeTier(err) {
+  if (!err) return false
+  return /402|credits depleted|403|not authorized|Forbidden/i.test(err)
+}
+function XFreeTierFallback({ onCompose }) {
+  const link = (label, href) => h('a', { href, target: '_blank', rel: 'noreferrer', style: { ...platBtn(false), textDecoration: 'none', display: 'inline-block' } }, label)
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+    h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ X Free tier blocks timeline reads + posting via API. Open X to view & post:'),
+    h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+      link('Open Home ↗', 'https://x.com/home'),
+      link('Notifications ↗', 'https://x.com/notifications'),
+      h('a', { href: xIntent(''), target: '_blank', rel: 'noreferrer', style: { ...platBtn(true), textDecoration: 'none', display: 'inline-block' } }, 'Compose ↗'),
+    )
+  )
+}
+
 const PLATFORMS = [
   { key: 'x', label: 'X', fields: [
     { k: 'X_API_KEY', label: 'API Key', secret: true },
@@ -209,6 +231,7 @@ function Compose({ status, refresh }) {
     h('textarea', { placeholder: platform === 'reddit' ? 'body text' : (platform === 'twitch' && twitchAction === 'title' ? 'new stream title' : 'what do you want to say?'), value: text, onChange: (e) => setText(e.target.value), rows: 5, style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' } }),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
       h('button', { onClick: send, disabled: busy || disabled || over || !text.trim(), style: btnStyle(false, busy || disabled || over || !text.trim()) }, busy ? 'Sending…' : (platform === 'twitch' ? (twitchAction === 'title' ? 'Update' : 'Send') : 'Post')),
+      platform === 'x' && h('a', { href: xIntent(text), target: '_blank', rel: 'noreferrer', style: { ...btnStyle(true), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }, title: 'Open X composer with this text prefilled' }, 'Open composer ↗'),
       text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? '#f87171' : '#888' } }, `${text.length}/280`),
     ),
     result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)', color: result.ok ? '#22c55e' : '#f87171', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
@@ -257,7 +280,9 @@ function Feeds({ status, refresh }) {
         return h('div', { key: k },
           h('div', { style: secTitleStyle }, meta.name),
           !sec && h('div', { style: secBodyStyle }, 'loading…'),
-          sec && !sec.ok && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ ' + (sec.error || 'not available')),
+          sec && !sec.ok && (k === 'x' && xFreeTier(sec.error)
+            ? h(XFreeTierFallback, { onCompose: () => {} })
+            : h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ ' + (sec.error || 'not available'))),
           sec && sec.ok && list.length === 0 && h('div', { style: secBodyStyle }, 'nothing yet'),
           list.map((it) => h(FeedItem, { key: it.id, it, meta }))
         )
