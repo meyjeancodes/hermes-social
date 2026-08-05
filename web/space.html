@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hermes Space — the Hermes Agent community</title>
+<style>
+  :root { --bg:#0d0a14; --panel:#1a1422; --accent:#a855f7; --accent2:#22d3ee; --text:#ece9f1; --muted:#9b94a8; --border:#2e2640; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, rgba(168,85,247,.25), transparent),
+      radial-gradient(1000px 500px at 90% 0%, rgba(34,211,238,.18), transparent),
+      var(--bg);
+    color:var(--text); min-height:100vh;
+  }
+  header {
+    text-align:center; padding:26px 16px 12px;
+    background:linear-gradient(180deg, rgba(168,85,247,.18), transparent);
+    border-bottom:1px solid var(--border);
+  }
+  header h1 {
+    margin:0; font-size:34px; letter-spacing:1px;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 0 24px rgba(168,85,247,.45);
+  }
+  header p { margin:6px 0 0; color:var(--muted); font-size:13px; }
+  .wrap { max-width:980px; margin:0 auto; padding:16px; display:grid; grid-template-columns:1fr 320px; gap:16px; }
+  @media (max-width:820px){ .wrap{ grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.35); }
+  .panel h2 { margin:0 0 10px; font-size:15px; color:var(--accent2); text-transform:uppercase; letter-spacing:1px; }
+  textarea, input {
+    width:100%; background:#120d1c; border:1px solid var(--border); color:var(--text);
+    border-radius:10px; padding:10px; font-family:inherit; font-size:14px; margin-bottom:8px;
+  }
+  textarea { resize:vertical; min-height:64px; }
+  button {
+    background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#0d0a14; border:0;
+    border-radius:10px; padding:9px 14px; font-weight:700; cursor:pointer; font-size:13px;
+  }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .nowplay { margin-bottom:8px; }
+  .nowplay iframe { width:100%; height:152px; border:0; border-radius:10px; background:#000; }
+  .post { border-top:1px solid var(--border); padding:12px 0; }
+  .post:first-child { border-top:0; }
+  .post .head { display:flex; align-items:baseline; gap:8px; margin-bottom:4px; }
+  .post .nick { font-weight:700; color:var(--accent); }
+  .post .time { color:var(--muted); font-size:11px; }
+  .post .text { font-size:14px; line-height:1.45; white-space:pre-wrap; }
+  .post .song { margin-top:6px; font-size:12px; color:var(--accent2); cursor:pointer; }
+  .hint { font-size:11px; color:var(--muted); margin-top:6px; }
+  .profile .bio { font-size:13px; color:var(--text); white-space:pre-wrap; }
+  .profile .meta { font-size:11px; color:var(--muted); margin-top:6px; }
+  .tag { display:inline-block; background:rgba(34,211,238,.15); color:var(--accent2); font-size:10px; padding:2px 6px; border-radius:6px; margin-left:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>✦ HERMES SPACE ✦</h1>
+  <p>the Hermes Agent community — shit-post, talk shop, and drop your song. requested by Teknium, old-Myspace style.</p>
+</header>
+
+<div class="wrap">
+  <div>
+    <div class="panel">
+      <h2>Now Playing</h2>
+      <div class="nowplay" id="nowplay"><div class="hint">no song loaded — post with a YouTube link to share your theme.</div></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Post to the feed</h2>
+      <input id="nick" placeholder="your handle (e.g. teknium, megan)" />
+      <textarea id="text" placeholder="what's on your mind about Hermes / life / shit-posting…"></textarea>
+      <input id="song" placeholder="song URL (YouTube link) — Myspace style 🎵 (optional)" />
+      <button id="postBtn">Post it</button>
+      <div class="hint">posts are public in this local community. your profile + song carry across posts.</div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>The Feed</h2>
+      <div id="feed"><div class="hint">loading…</div></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel profile">
+      <h2>Your Profile</h2>
+      <input id="p_nick" placeholder="handle" />
+      <input id="p_bio" placeholder="bio / status" />
+      <input id="p_song" placeholder="your theme song (YouTube link)" />
+      <button id="saveBtn">Save profile</button>
+      <div class="meta" id="profileMeta"></div>
+    </div>
+    <div class="panel" style="margin-top:16px;">
+      <h2>Community <span class="tag" id="userCount">0</span></h2>
+      <div id="users" class="hint">loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = 'http://127.0.0.1:8731'
+const $ = (id) => document.getElementById(id)
+
+function ytEmbed(url){
+  if(!url) return ''
+  const m = url.match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([\w-]{11})/)
+  const id = m ? m[1] : (url.trim().match(/^[\w-]{11}$/)?.[0] || '')
+  if(!id) return ''
+  return `https://www.youtube.com/embed/${id}?autoplay=1&rel=0`
+}
+
+function timeAgo(ts){
+  const s = Math.floor((Date.now()/1000) - ts)
+  if (s < 60) return s+'s ago'
+  if (s < 3600) return Math.floor(s/60)+'m ago'
+  if (s < 86400) return Math.floor(s/3600)+'h ago'
+  return Math.floor(s/86400)+'d ago'
+}
+
+function loadFeed(){
+  fetch(API + '/space/posts?limit=60').then(r=>r.json()).then(d=>{
+    const feed = $('feed')
+    if(!d.posts || !d.posts.length){ feed.innerHTML = '<div class="hint">no posts yet — be the first to shit-post.</div>'; return }
+    feed.innerHTML = d.posts.map(p=>`
+      <div class="post">
+        <div class="head"><span class="nick">@${escapeHtml(p.nick)}</span><span class="time">${timeAgo(p.ts)}</span></div>
+        <div class="text">${escapeHtml(p.text)}</div>
+        ${p.song ? `<div class="song" onclick="playSong('${encodeURIComponent(p.song)}')">🎵 ${escapeHtml(p.song)}</div>` : ''}
+      </div>`).join('')
+  }).catch(e=>{ $('feed').innerHTML = '<div class="hint">could not reach Hermes Space server.</div>' })
+}
+
+function playSong(url){
+  const e = ytEmbed(decodeURIComponent(url))
+  $('nowplay').innerHTML = e ? `<iframe src="${e}" allow="autoplay; encrypted-media" allowfullscreen></iframe>`
+    : `<div class="hint">no playable song (need a YouTube link).</div>`
+}
+
+function loadUsers(){
+  fetch(API + '/space/users').then(r=>r.json()).then(d=>{
+    $('userCount').textContent = (d.users||[]).length
+    $('users').innerHTML = (d.users||[]).map(u=>`
+      <div style="padding:6px 0;border-top:1px solid var(--border);">
+        <div class="nick" style="color:var(--accent);font-weight:700;">@${escapeHtml(u.nick)}</div>
+        ${u.bio ? `<div class="bio" style="font-size:12px;color:var(--text);">${escapeHtml(u.bio)}</div>`:''}
+        ${u.song ? `<div class="song" style="font-size:11px;color:var(--accent2);cursor:pointer;" onclick="playSong('${encodeURIComponent(u.song)}')">🎵 theme</div>`:''}
+      </div>`).join('')
+  }).catch(()=>{})
+}
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) }
+
+$('postBtn').onclick = () => {
+  const nick = $('nick').value.trim(), text = $('text').value.trim(), song = $('song').value.trim()
+  if(!nick || !text){ alert('handle + message required'); return }
+  $('postBtn').disabled = true
+  fetch(API + '/space/post', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nick, text, song})}).then(()=>{ $('text').value=''; loadFeed(); loadUsers() })
+    .finally(()=> $('postBtn').disabled = false)
+}
+
+$('saveBtn').onclick = () => {
+  const nick = $('p_nick').value.trim(), bio = $('p_bio').value.trim(), song = $('p_song').value.trim()
+  if(!nick){ alert('handle required'); return }
+  fetch(API + '/space/user', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({nick, bio, song})}).then(r=>r.json()).then(d=>{
+      if(d.ok){
+        // also prefill the post form so the song carries
+        $('nick').value = nick; $('song').value = song
+        $('profileMeta').textContent = 'saved @' + nick
+        if(song) playSong(song)
+        loadUsers()
+      }
+    })
+}
+
+loadFeed(); loadUsers()
+</script>
+</body>
+</html>
