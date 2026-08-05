@@ -74,6 +74,18 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     if method == "POST" and path == "/a2a/autoreply":
         from . import autoreply
         return autoreply.set_config(body)
+    if method == "GET" and path == "/a2a/discover":
+        from . import discovery
+        return discovery.peers()
+    if method == "POST" and path == "/a2a/discover":
+        from . import discovery
+        if body.get("action") == "stop":
+            return discovery.stop()
+        return discovery.start(RUNNING_PORT, RUNNING_HOST)
+    # One-click connect: verify the peer is actually reachable and that its
+    # identity matches what was advertised, then save it. Beats pasting URLs.
+    if method == "POST" and path == "/a2a/connect":
+        return _connect(body.get("address", ""), body.get("url", ""), body.get("name", ""))
     if method == "GET" and path == "/drafts":
         return drafts.list_drafts(params.get("status", [""])[0])
     if method == "POST" and seg and seg[0] == "drafts":
@@ -133,14 +145,36 @@ _CACHE: dict = {}
 CACHE_TTL = 90.0
 
 SRC_PREFS_PATH = os.path.expanduser("~/.config/social/sources.json")
+# Curated starting set. These are the feeds the project was actually built
+# against — robotics/AI/embedded — rather than generic placeholders, and each
+# field takes a LIST so several feeds of the same kind all reach the timeline.
 SRC_DEFAULTS = {
-    "bluesky_handle": "bsky.app",
+    "bluesky_handles": ["bsky.app"],
     "mastodon_instance": "fosstodon.org",
-    "youtube_channel_id": "",
-    "rss_url": "",
-    "subreddit": "",
+    "youtube_channels": [],
+    "rss_urls": [
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://spectrum.ieee.org/feeds/topic/robotics.rss",
+        "https://www.therobotreport.com/feed/",
+    ],
+    "subreddits": ["robotics", "embedded"],
     "enabled": list(PUBLIC_SOURCES),
 }
+
+# Older configs stored a single value per source; migrate them to lists so an
+# existing install keeps its feeds instead of silently reverting to defaults.
+_LEGACY = {
+    "bluesky_handle": "bluesky_handles",
+    "rss_url": "rss_urls",
+    "subreddit": "subreddits",
+    "youtube_channel_id": "youtube_channels",
+}
+
+
+def _as_list(v) -> list:
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    return [str(v).strip()] if str(v or "").strip() else []
 
 
 def _src_prefs() -> dict:
@@ -150,17 +184,60 @@ def _src_prefs() -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         saved = {}
     out = dict(SRC_DEFAULTS)
+    # Carry legacy single-value keys over to their list equivalents.
+    for old, new in _LEGACY.items():
+        if old in saved and saved[old]:
+            merged = _as_list(saved.get(new)) or []
+            for v in _as_list(saved[old]):
+                if v not in merged:
+                    merged.append(v)
+            out[new] = merged
     out.update({k: v for k, v in saved.items() if k in SRC_DEFAULTS})
+    # mastodon.social started requiring auth for public timelines; a saved
+    # pref pointing there yields an empty Mastodon section forever.
+    if out.get("mastodon_instance") in ("mastodon.social", "", None):
+        out["mastodon_instance"] = SRC_DEFAULTS["mastodon_instance"]
+    for key in ("bluesky_handles", "rss_urls", "subreddits", "youtube_channels"):
+        out[key] = _as_list(out.get(key))
     return out
 
 
 def _save_src_prefs(new: dict) -> dict:
     prefs = _src_prefs()
-    prefs.update({k: v for k, v in (new or {}).items() if k in SRC_DEFAULTS})
+    for k, v in (new or {}).items():
+        if k not in SRC_DEFAULTS:
+            continue
+        prefs[k] = _as_list(v) if isinstance(SRC_DEFAULTS[k], list) and k != "enabled" else v
     os.makedirs(os.path.dirname(SRC_PREFS_PATH), exist_ok=True)
     with open(SRC_PREFS_PATH, "w", encoding="utf-8") as f:
         json.dump(prefs, f, indent=2)
     return {"ok": True, "sources": prefs}
+
+
+def _safe(fn, n: int) -> dict:
+    """Run one feed fetcher, turning any exception into an error payload."""
+    try:
+        return fn(n)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _feed_cached(key: tuple, fn, n: int) -> dict:
+    """Per-feed cache. Caching whole sources meant one subreddit's 429 threw
+    away the other subreddits' good results too; keyed per feed, each one keeps
+    its own last-good payload and a transient failure costs only that feed."""
+    now = time.time()
+    hit = _CACHE.get(key)
+    if hit and now - hit[0] < CACHE_TTL and hit[1].get("ok"):
+        return hit[1]
+    res = _safe(fn, n)
+    if res.get("ok"):
+        _CACHE[key] = (now, res)
+    elif hit:
+        stale = dict(hit[1])
+        stale["stale"] = True
+        return stale
+    return res
 
 
 def _public_sections(limit: int, only: list | None = None) -> dict:
@@ -173,41 +250,70 @@ def _public_sections(limit: int, only: list | None = None) -> dict:
 
     p = _src_prefs()
     enabled = only if only is not None else p.get("enabled", list(PUBLIC_SOURCES))
+
+    # Each source may have several feeds configured; fan out over all of them
+    # and merge, so every feed the user added actually reaches the timeline.
+    def multi(src: str, fetchers, serial: bool = False):
+        def run():
+            from concurrent.futures import ThreadPoolExecutor as _TPE
+
+            items, errs = [], []
+            n = max(1, len(fetchers))
+            share = max(3, (limit + n - 1) // n)
+            keyed = [((src, tag, share), fn) for tag, fn in fetchers]
+            if serial:
+                # Reddit refuses concurrent requests from one IP (every parallel
+                # call 429s), so its feeds are fetched one at a time, spaced out.
+                results = []
+                for i, (k, fn) in enumerate(keyed):
+                    if i:
+                        time.sleep(1.2)
+                    results.append(_feed_cached(k, fn, share))
+            else:
+                with _TPE(max_workers=min(n, 6)) as ex:
+                    results = list(ex.map(lambda kf: _feed_cached(kf[0], kf[1], share), keyed))
+            for r in results:
+                if r.get("ok"):
+                    items.extend(r.get("items", [])[:share])
+                elif r.get("error"):
+                    errs.append(str(r["error"]))
+            if items:
+                return {"ok": True, "items": items}
+            return {"ok": False, "error": "; ".join(e for e in errs if e)[:300] or "no items"}
+        return run
+
+    handles = p.get("bluesky_handles") or [""]
+    subs = p.get("subreddits") or [""]
+    rsses = p.get("rss_urls") or []
+    chans = p.get("youtube_channels") or []
+
     jobs = {
-        "bluesky": lambda: sources.bluesky_feeds(limit, p.get("bluesky_handle", "")),
+        "bluesky": multi("bluesky", [(hh, lambda n, hh=hh: sources.bluesky_feeds(n, hh)) for hh in handles]),
         "mastodon": lambda: sources.mastodon_feeds(limit, p.get("mastodon_instance", "")),
-        "youtube": lambda: sources.youtube_feeds(limit, channel_id=p.get("youtube_channel_id", "")),
-        "rss": lambda: sources.rss_feeds(p.get("rss_url", ""), limit),
+        "youtube": multi("youtube", [(c, lambda n, c=c: sources.youtube_feeds(n, channel_id=c)) for c in chans]),
+        "rss": multi("rss", [(u, lambda n, u=u: sources.rss_feeds(u, n)) for u in rsses]),
         "hn": lambda: platforms.hn_feeds(limit),
-        "reddit": lambda: platforms.reddit_feeds(limit, subreddit=p.get("subreddit", "") or _get("subreddit")),
+        "reddit": multi("reddit", [(s, lambda n, s=s: platforms.reddit_feeds(n, subreddit=s)) for s in subs], serial=True),
     }
+    # A source with nothing configured is simply not part of this timeline —
+    # better than surfacing a 404 from an empty channel id.
+    if not chans:
+        jobs.pop("youtube", None)
+    if not rsses:
+        jobs.pop("rss", None)
     jobs = {k: v for k, v in jobs.items() if k in enabled}
     out: dict = {}
-    fetch: dict = {}
-    now = time.time()
-    for k, fn in jobs.items():
-        ck = (k, limit, str(p.get(k + "_handle", "")) + str(p.get("subreddit", "")))
-        hit = _CACHE.get(ck)
-        if hit and now - hit[0] < CACHE_TTL and hit[1].get("ok"):
-            out[k] = hit[1]
-        else:
-            fetch[k] = (fn, ck)
-    if fetch:
-        with ThreadPoolExecutor(max_workers=len(fetch)) as ex:
-            futs = {k: ex.submit(fn) for k, (fn, _) in fetch.items()}
-            for k, fut in futs.items():
-                ck = fetch[k][1]
-                try:
-                    res = fut.result(timeout=30)
-                except Exception as e:
-                    res = {"ok": False, "error": str(e)}
-                if res.get("ok"):
-                    _CACHE[ck] = (now, res)
-                elif _CACHE.get(ck):
-                    # serve the last good payload rather than an empty section
-                    res = dict(_CACHE[ck][1])
-                    res["stale"] = True
-                out[k] = res
+    if not jobs:
+        return out
+    # Caching now happens per feed inside multi(), so sources just run in
+    # parallel here; a slow source no longer delays the others.
+    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        futs = {k: ex.submit(fn) for k, fn in jobs.items()}
+        for k, fut in futs.items():
+            try:
+                out[k] = fut.result(timeout=60)
+            except Exception as e:
+                out[k] = {"ok": False, "error": str(e)}
     return out
 
 
@@ -232,6 +338,38 @@ def _timeline(params: dict) -> dict:
     return merged
 
 
+def _connect(address: str, url: str, name: str = "") -> dict:
+    """Verify a peer before saving it, so a saved peer is a working peer.
+
+    Connecting used to mean pasting an address and a URL and hoping. Here we
+    actually call the peer's /a2a/identity and refuse the connection unless it
+    answers AND the address it reports matches the one being connected to —
+    which catches typos, dead hosts, stale discovery entries, and a host
+    claiming to be an agent it isn't.
+    """
+    import requests
+
+    url = (url or "").strip().rstrip("/")
+    address = (address or "").strip()
+    if not url:
+        return {"ok": False, "error": "a URL is required"}
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    try:
+        r = requests.get(url + "/a2a/identity", timeout=8)
+        who = r.json()
+    except Exception as e:
+        return {"ok": False, "error": f"could not reach {url}: {e}"}
+    if not who.get("address"):
+        return {"ok": False, "error": f"{url} did not answer as a Hermes agent"}
+    if address and who["address"] != address:
+        return {"ok": False, "error":
+                f"identity mismatch: {url} is {who['address']}, not {address}"}
+    a2a.add_peer(who["address"], url, name or who.get("name", ""))
+    return {"ok": True, "peer": {"address": who["address"], "url": url,
+                                 "name": name or who.get("name", "")}}
+
+
 def _inbox(limit: int = 30) -> dict:
     """Engagement: mentions/replies/notifications across whatever we can read."""
     from concurrent.futures import ThreadPoolExecutor
@@ -243,7 +381,7 @@ def _inbox(limit: int = 30) -> dict:
         jobs["x"] = lambda: platforms.x_feeds(limit, feed="mentions")
     if conf.get("twitch"):
         jobs["twitch"] = lambda: platforms.twitch_feeds(limit)  # followers = engagement
-    handle = p.get("bluesky_handle", "")
+    handle = (p.get("bluesky_handles") or [""])[0]
     if handle:
         jobs["bluesky"] = lambda: sources.bluesky_search("@" + handle.lstrip("@"), limit)
     out: dict = {}
@@ -424,10 +562,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"ok": False, "error": str(e)})
 
 
+RUNNING_PORT = PORT
+RUNNING_HOST = HOST
+
+
 def serve(host: str = HOST, port: int = PORT) -> ThreadingHTTPServer:
+    global RUNNING_PORT, RUNNING_HOST
+    RUNNING_PORT, RUNNING_HOST = port, host
     srv = ThreadingHTTPServer((host, port), Handler)
     # scheduled drafts fire from inside the server process
     drafts.start_scheduler(lambda d: _mass_post(d))
+    # Announce on the LAN so other agents can find us without exchanging
+    # addresses by hand. Failure here is never fatal — discovery is a bonus.
+    try:
+        from . import discovery
+        discovery.start(port, host)
+    except Exception:
+        pass
     return srv
 
 

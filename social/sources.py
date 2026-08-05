@@ -17,6 +17,16 @@ from typing import Any, Dict, List
 import requests
 
 UA = {"User-Agent": "hermes-social/0.2 (+local)"}
+# YouTube's RSS endpoint 404s on unrecognised user agents — verified: the exact
+# same channel_id returns 404 with our UA and 200 with a browser one. Feed hosts
+# that fingerprint clients get this instead.
+BROWSER_UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+    ),
+    "Accept": "application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+}
 TIMEOUT = 20
 
 
@@ -239,6 +249,10 @@ def rss_feeds(url: str, limit: int = 15, source: str = "rss") -> Dict[str, Any]:
 def _atom(url: str, source: str, limit: int) -> Dict[str, Any]:
     try:
         r = requests.get(url, headers=UA, timeout=TIMEOUT)
+        # Some hosts (YouTube especially) reject unknown clients with 403/404;
+        # retry once as a browser before believing the feed is really gone.
+        if r.status_code in (401, 403, 404, 429):
+            r = requests.get(url, headers=BROWSER_UA, timeout=TIMEOUT)
         if not r.ok:
             return {"ok": False, "error": f"{source} HTTP {r.status_code}"}
         root = ET.fromstring(r.content)

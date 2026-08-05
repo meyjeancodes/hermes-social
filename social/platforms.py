@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import subprocess
 import time
@@ -268,7 +269,7 @@ def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]
     try:
         sub = subreddit or "popular"
         resp = None
-        for attempt in range(3):
+        for attempt in range(4):
             resp = requests.get(
                 f"https://www.reddit.com/r/{sub}/.rss",
                 params={"limit": limit},
@@ -277,7 +278,9 @@ def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]
             )
             if resp.status_code != 429:
                 break
-            time.sleep(1.5 * (attempt + 1))  # Reddit rate-limits bursts; back off
+            # Several subreddits are fetched at once; Reddit throttles bursts,
+            # so back off with jitter rather than giving up on the later ones.
+            time.sleep(1.5 * (attempt + 1) + random.random())
         if resp is None or not resp.ok:
             code = resp.status_code if resp is not None else "?"
             return {"ok": False, "error": f"Reddit RSS HTTP {code}"}
