@@ -822,6 +822,7 @@ function Messages() {
           h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 } }, t.preview || ''),
         )),
       ),
+      h(AutoReply, { threads }),
       me && h('div', { style: { padding: '8px 10px', borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
         h('div', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'Your address'),
         h('div', { title: 'Share this with another agent so they can message you',
@@ -855,6 +856,76 @@ function Messages() {
   )
 }
 
+// Controls whether the local Hermes agent answers inbound messages by itself.
+function AutoReply({ threads }) {
+  const [cfg, setCfg] = React.useState(null)
+  const [log, setLog] = React.useState([])
+  const [open, setOpen] = React.useState(false)
+
+  const pull = React.useCallback(() => {
+    fetch(API + '/a2a/autoreply').then((r) => r.json()).then((d) => { setCfg(d.config); setLog(d.log || []) }).catch(() => {})
+  }, [])
+  React.useEffect(() => { pull(); const t = setInterval(pull, 15000); return () => clearInterval(t) }, [pull])
+
+  const save = (patch) => {
+    setCfg((c) => ({ ...c, ...patch }))
+    fetch(API + '/a2a/autoreply', { method: 'POST', headers: JH, body: JSON.stringify(patch) })
+      .then((r) => r.json()).then((d) => d.config && setCfg(d.config)).catch(() => {})
+  }
+  if (!cfg) return null
+
+  const peers = Array.from(new Set((threads || []).map((t) => t.peer).filter(Boolean)))
+  return h('div', { style: { borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+    h('button', { onClick: () => setOpen((o) => !o), style: {
+      display: 'flex', alignItems: 'center', gap: 6, width: '100%', cursor: 'pointer',
+      padding: '7px 10px', background: 'transparent', border: 'none', color: 'var(--text)',
+    } },
+      h('span', { style: {
+        width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+        background: cfg.enabled ? '#22c55e' : '#4b5563',
+        boxShadow: cfg.enabled ? '0 0 6px #22c55e' : 'none',
+      } }),
+      h('span', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #9ca3af)' } },
+        'Auto-reply ' + (cfg.enabled ? 'on' : 'off')),
+      h('span', { style: { marginLeft: 'auto', fontSize: 10, color: 'var(--ui-text-tertiary, #6b7280)' } }, open ? '▾' : '▸'),
+    ),
+    open && h('div', { style: { padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 7 } },
+      h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)', lineHeight: 1.4 } },
+        'Your agent answers inbound messages on its own, using the local model.'),
+      h('label', { style: rowLbl },
+        h('input', { type: 'checkbox', checked: !!cfg.enabled, onChange: (e) => save({ enabled: e.target.checked }) }),
+        'Enable auto-reply'),
+      h('label', { style: rowLbl },
+        h('input', { type: 'checkbox', checked: !!cfg.allow_all, onChange: (e) => save({ allow_all: e.target.checked }) }),
+        'Reply to any agent'),
+      !cfg.allow_all && h('div', null,
+        h('div', { style: { ...secTitleStyle, marginTop: 2 } }, 'Allowed senders'),
+        peers.length === 0 && h('div', { style: { fontSize: 11, color: '#6b7280' } }, 'No known peers yet.'),
+        peers.map((p) => h('label', { key: p, style: { ...rowLbl, fontFamily: MONO, fontSize: 10 } },
+          h('input', { type: 'checkbox', checked: (cfg.allowed || []).includes(p),
+            onChange: (e) => save({ allowed: e.target.checked ? [...(cfg.allowed || []), p] : (cfg.allowed || []).filter((x) => x !== p) }) }),
+          p)),
+      ),
+      h('label', { style: { ...rowLbl, justifyContent: 'space-between' } }, 'Max auto-replies per thread',
+        h('input', { type: 'number', min: 1, max: 50, value: cfg.max_turns,
+          onChange: (e) => save({ max_turns: Number(e.target.value) || 1 }),
+          style: { ...fieldStyle, width: 62, padding: '3px 6px' } })),
+      h('textarea', { value: cfg.persona || '', rows: 2,
+        placeholder: 'Optional persona, e.g. "Terse robotics engineer."',
+        onChange: (e) => setCfg({ ...cfg, persona: e.target.value }),
+        onBlur: (e) => save({ persona: e.target.value }),
+        style: { ...fieldStyle, resize: 'vertical' } }),
+      log.length > 0 && h('div', null,
+        h('div', { style: secTitleStyle }, 'Recent activity'),
+        h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #6b7280)', maxHeight: 90, overflowY: 'auto', lineHeight: 1.5 } },
+          log.slice(-6).reverse().map((ln, i) => h('div', { key: i, style: { overflowWrap: 'anywhere' } }, ln))),
+      ),
+    ),
+  )
+}
+
+const rowLbl = { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, cursor: 'pointer' }
+
 function Bubble({ m }) {
   const out = m.dir === 'out'
   return h('div', { style: { display: 'flex', justifyContent: out ? 'flex-end' : 'flex-start' } },
@@ -869,7 +940,7 @@ function Bubble({ m }) {
       h('div', { title: 'Signature verified on receipt', style: {
         marginTop: 4, fontFamily: MONO, fontSize: '0.45rem', letterSpacing: '0.1em',
         textTransform: 'uppercase', opacity: 0.7,
-      } }, (out ? '' : '✓ signed · ') + ago(m.ts)),
+      } }, (out ? '' : '✓ signed · ') + (m.auto ? '🤖 auto · ' : '') + ago(m.ts)),
     )
   )
 }
@@ -1068,7 +1139,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply }
 
 export default {
   id: ID,

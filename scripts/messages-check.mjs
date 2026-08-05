@@ -16,8 +16,8 @@ console.log('identity: ' + id.address + '  (' + id.name + ')')
 console.log('threads: ' + (th.threads || []).length + ', unread ' + th.unread)
 
 const mod = await import('../desktop/plugin.js')
-const { Bubble, NewConversation, Messages, Inbox } = mod.__test__
-for (const [n, C] of [['Bubble', Bubble], ['NewConversation', NewConversation], ['Messages', Messages], ['Inbox', Inbox]]) {
+const { Bubble, NewConversation, Messages, Inbox, AutoReply } = mod.__test__
+for (const [n, C] of [['Bubble', Bubble], ['NewConversation', NewConversation], ['Messages', Messages], ['Inbox', Inbox], ['AutoReply', AutoReply]]) {
   if (!C) throw new Error('plugin.js does not export __test__.' + n)
 }
 
@@ -29,14 +29,20 @@ console.log('NewConversation    → ' + renderToString(React.createElement(NewCo
 // Bubbles must render real messages, both directions, and show the signed mark.
 const msgs = (th.threads || []).flatMap((t) => t.messages)
 if (!msgs.length) throw new Error('no a2a messages to render — run scripts/a2a_test.py first')
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' }[c]))
 let sawIn = false, sawOut = false
 for (const m of msgs) {
   const out = renderToString(React.createElement(Bubble, { m }))
-  if (!out.includes(m.body.slice(0, 20).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))))
+  if (!out.includes(esc(m.body.slice(0, 20))))
     throw new Error('bubble did not render its body: ' + m.body)
   if (m.dir === 'in') { sawIn = true; if (!out.includes('signed')) throw new Error('inbound bubble missing signed marker') }
   if (m.dir === 'out') sawOut = true
 }
+// An auto-reply must be visibly labelled as machine-generated.
+const auto = msgs.find((m) => m.auto)
+if (auto && !renderToString(React.createElement(Bubble, { m: auto })).includes('auto'))
+  throw new Error('auto-reply bubble is not labelled auto')
+console.log('auto-reply bubbles labelled: ' + (auto ? 'yes' : 'none present'))
 console.log('rendered ' + msgs.length + ' real message bubbles (in=' + sawIn + ' out=' + sawOut + ')')
 
 // Timestamps must not render blank — ago() has to accept epoch seconds.
