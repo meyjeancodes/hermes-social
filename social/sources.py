@@ -29,6 +29,8 @@ def _item(**kw) -> Dict[str, Any]:
         "id": "", "source": "", "author": "", "title": "", "text": "",
         "url": "", "created_at": "", "score": None, "num_comments": None,
         "media_url": "", "kind": "post",
+        # richer embed payload — consumed by the UI to render real post cards
+        "avatar": "", "images": [], "link": None, "quote": None, "video": None,
     }
     base.update(kw)
     if not base["id"]:
@@ -40,6 +42,56 @@ def _item(**kw) -> Dict[str, Any]:
 BSKY = "https://public.api.bsky.app/xrpc"
 # public.api.bsky.app 403s on searchPosts; api.bsky.app serves it anonymously.
 BSKY_SEARCH = "https://api.bsky.app/xrpc"
+
+
+def _bsky_embed(embed: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Unpack a Bluesky embed view into images / link card / quote / video."""
+    out: Dict[str, Any] = {"images": [], "link": None, "quote": None, "video": None}
+    if not embed:
+        return out
+    t = embed.get("$type", "")
+    # recordWithMedia carries both a quote and media — handle each half
+    if t.startswith("app.bsky.embed.recordWithMedia"):
+        inner = _bsky_embed(embed.get("media"))
+        out.update({k: v for k, v in inner.items() if v})
+        rec = (embed.get("record") or {}).get("record")
+        out["quote"] = _bsky_quote(rec)
+        return out
+    if t.startswith("app.bsky.embed.images"):
+        out["images"] = [
+            {"thumb": i.get("thumb", ""), "full": i.get("fullsize", ""), "alt": i.get("alt", "")}
+            for i in embed.get("images", [])[:4]
+        ]
+    elif t.startswith("app.bsky.embed.external"):
+        e = embed.get("external", {}) or {}
+        out["link"] = {
+            "url": e.get("uri", ""), "title": e.get("title", ""),
+            "description": e.get("description", ""), "thumb": e.get("thumb", ""),
+        }
+    elif t.startswith("app.bsky.embed.video"):
+        out["video"] = {"thumb": embed.get("thumbnail", ""), "playlist": embed.get("playlist", "")}
+    elif t.startswith("app.bsky.embed.record"):
+        out["quote"] = _bsky_quote(embed.get("record"))
+    return out
+
+
+def _bsky_quote(rec: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not isinstance(rec, dict):
+        return None
+    a = rec.get("author", {}) or {}
+    val = rec.get("value", {}) or rec.get("record", {}) or {}
+    rkey = str(rec.get("uri", "")).rsplit("/", 1)[-1]
+    handle = a.get("handle", "")
+    if not handle and not val.get("text"):
+        return None
+    return {
+        "author": handle,
+        "name": a.get("displayName", ""),
+        "avatar": a.get("avatar", ""),
+        "text": val.get("text", ""),
+        "created_at": val.get("createdAt", ""),
+        "url": f"https://bsky.app/profile/{handle}/post/{rkey}" if rkey and handle else "",
+    }
 
 
 def bluesky_feeds(limit: int = 15, handle: str = "") -> Dict[str, Any]:
@@ -69,6 +121,8 @@ def bluesky_feeds(limit: int = 15, handle: str = "") -> Dict[str, Any]:
                 created_at=rec.get("createdAt", ""),
                 score=p.get("likeCount"),
                 num_comments=p.get("replyCount"),
+                avatar=a.get("avatar", ""),
+                **_bsky_embed(p.get("embed")),
             ))
         return {"ok": True, "items": items}
     except Exception as e:
@@ -93,7 +147,9 @@ def bluesky_search(q: str, limit: int = 15) -> Dict[str, Any]:
                                    title=a.get("displayName", ""), text=rec.get("text", ""),
                                    url=f"https://bsky.app/profile/{a.get('handle','')}/post/{rkey}",
                                    created_at=rec.get("createdAt", ""),
-                                   score=p.get("likeCount"), num_comments=p.get("replyCount")))
+                                   avatar=a.get("avatar", ""),
+                                   score=p.get("likeCount"), num_comments=p.get("replyCount"),
+                                   **_bsky_embed(p.get("embed"))))
             return {"ok": True, "items": items}
         except Exception as e:
             last = str(e)
@@ -125,6 +181,8 @@ def mastodon_feeds(limit: int = 15, instance: str = "fosstodon.org") -> Dict[str
             items = []
             for s in r.json():
                 acct = s.get("account", {}) or {}
+                atts = s.get("media_attachments") or []
+                card = s.get("card") or {}
                 items.append(_item(
                     source="mastodon",
                     author=(acct.get("acct", "") + "@" + inst) if "@" not in acct.get("acct", "") else acct.get("acct", ""),
@@ -134,7 +192,15 @@ def mastodon_feeds(limit: int = 15, instance: str = "fosstodon.org") -> Dict[str
                     created_at=s.get("created_at", ""),
                     score=s.get("favourites_count"),
                     num_comments=s.get("replies_count"),
-                    media_url=(s.get("media_attachments") or [{}])[0].get("preview_url", ""),
+                    avatar=acct.get("avatar_static", "") or acct.get("avatar", ""),
+                    media_url=(atts[0].get("preview_url", "") if atts else ""),
+                    images=[{"thumb": a.get("preview_url", ""), "full": a.get("url", ""), "alt": a.get("description") or ""}
+                            for a in atts if a.get("type") == "image"][:4],
+                    video=({"thumb": atts[0].get("preview_url", ""), "playlist": atts[0].get("url", "")}
+                           if atts and atts[0].get("type") in ("video", "gifv") else None),
+                    link=({"url": card.get("url", ""), "title": card.get("title", ""),
+                           "description": card.get("description", ""), "thumb": card.get("image", "")}
+                          if card.get("url") else None),
                 ))
             return {"ok": True, "items": items, "instance": inst}
         except Exception as e:
@@ -182,14 +248,20 @@ def _atom(url: str, source: str, limit: int) -> Dict[str, Any]:
         for e in root.findall(".//a:entry", ns)[:limit]:
             link = e.find("a:link", ns)
             thumb = e.find(".//m:thumbnail", ns)
+            href = (link.get("href") if link is not None else "")
+            vid = ""
+            if source == "youtube":
+                yid = e.find("{http://www.youtube.com/xml/schemas/2015}videoId")
+                vid = (yid.text or "").strip() if yid is not None else ""
             items.append(_item(
                 source=source,
                 title=_txt(e.find("a:title", ns)),
                 author=_txt(e.find("a:author/a:name", ns)),
                 text=_txt(e.find(".//m:description", ns)),
-                url=(link.get("href") if link is not None else ""),
+                url=href,
                 created_at=_txt(e.find("a:published", ns)) or _txt(e.find("a:updated", ns)),
                 media_url=(thumb.get("url") if thumb is not None else ""),
+                video=({"youtube_id": vid, "thumb": (thumb.get("url") if thumb is not None else "")} if vid else None),
             ))
         if items:
             return {"ok": True, "items": items}
@@ -256,6 +328,11 @@ def normalize(source: str, raw: Dict[str, Any]) -> Dict[str, Any]:
         num_comments=raw.get("num_comments", m.get("reply_count")),
         media_url=raw.get("media_url") or "",
         kind=raw.get("kind", "post"),
+        avatar=raw.get("avatar") or "",
+        images=raw.get("images") or [],
+        link=raw.get("link"),
+        quote=raw.get("quote"),
+        video=raw.get("video"),
     )
 
 

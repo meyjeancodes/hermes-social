@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -99,6 +100,10 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
 
 PUBLIC_SOURCES = ("bluesky", "mastodon", "youtube", "rss", "hn", "reddit")
 
+# in-process feed cache: {(source, limit, key): (fetched_at, payload)}
+_CACHE: dict = {}
+CACHE_TTL = 90.0
+
 SRC_PREFS_PATH = os.path.expanduser("~/.config/social/sources.json")
 SRC_DEFAULTS = {
     "bluesky_handle": "bsky.app",
@@ -131,7 +136,11 @@ def _save_src_prefs(new: dict) -> dict:
 
 
 def _public_sections(limit: int, only: list | None = None) -> dict:
-    """Fetch every credential-free source, in parallel."""
+    """Fetch every credential-free source, in parallel, with a short TTL cache.
+
+    Without the cache a 60s auto-refresh (plus every filter click) hammers the
+    upstreams and Reddit starts returning HTTP 429.
+    """
     from concurrent.futures import ThreadPoolExecutor
 
     p = _src_prefs()
@@ -146,15 +155,31 @@ def _public_sections(limit: int, only: list | None = None) -> dict:
     }
     jobs = {k: v for k, v in jobs.items() if k in enabled}
     out: dict = {}
-    if not jobs:
-        return out
-    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
-        futs = {k: ex.submit(fn) for k, fn in jobs.items()}
-        for k, fut in futs.items():
-            try:
-                out[k] = fut.result(timeout=30)
-            except Exception as e:
-                out[k] = {"ok": False, "error": str(e)}
+    fetch: dict = {}
+    now = time.time()
+    for k, fn in jobs.items():
+        ck = (k, limit, str(p.get(k + "_handle", "")) + str(p.get("subreddit", "")))
+        hit = _CACHE.get(ck)
+        if hit and now - hit[0] < CACHE_TTL and hit[1].get("ok"):
+            out[k] = hit[1]
+        else:
+            fetch[k] = (fn, ck)
+    if fetch:
+        with ThreadPoolExecutor(max_workers=len(fetch)) as ex:
+            futs = {k: ex.submit(fn) for k, (fn, _) in fetch.items()}
+            for k, fut in futs.items():
+                ck = fetch[k][1]
+                try:
+                    res = fut.result(timeout=30)
+                except Exception as e:
+                    res = {"ok": False, "error": str(e)}
+                if res.get("ok"):
+                    _CACHE[ck] = (now, res)
+                elif _CACHE.get(ck):
+                    # serve the last good payload rather than an empty section
+                    res = dict(_CACHE[ck][1])
+                    res["stale"] = True
+                out[k] = res
     return out
 
 

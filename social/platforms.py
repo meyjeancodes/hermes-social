@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
 
@@ -266,14 +267,20 @@ def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]
     but .rss still works). No creds needed — fills the Feeds tab with real posts."""
     try:
         sub = subreddit or "popular"
-        resp = requests.get(
-            f"https://www.reddit.com/r/{sub}/.rss",
-            params={"limit": limit},
-            headers={"User-Agent": "hermes-social/0.1"},
-            timeout=30,
-        )
-        if not resp.ok:
-            return {"ok": False, "error": f"Reddit RSS HTTP {resp.status_code}"}
+        resp = None
+        for attempt in range(3):
+            resp = requests.get(
+                f"https://www.reddit.com/r/{sub}/.rss",
+                params={"limit": limit},
+                headers={"User-Agent": "hermes-social/0.2 (+local)"},
+                timeout=30,
+            )
+            if resp.status_code != 429:
+                break
+            time.sleep(1.5 * (attempt + 1))  # Reddit rate-limits bursts; back off
+        if resp is None or not resp.ok:
+            code = resp.status_code if resp is not None else "?"
+            return {"ok": False, "error": f"Reddit RSS HTTP {code}"}
         root = ET.fromstring(resp.text)
         ns = {"atom": "http://www.w3.org/2005/Atom"}
         items = []
@@ -288,6 +295,10 @@ def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]
             content = e.findtext("atom:content", default="", namespaces=ns) or ""
             sc = re.search(r"(\d+)\s*points?", content)
             cm = re.search(r"(\d+)\s*comments?", content)
+            # Reddit escapes the HTML inside <content>, so match both the raw
+            # and the entity-escaped form of the thumbnail <img>.
+            thumb_m = re.search(r'<img src="([^"]+)"', content) or re.search(r'&lt;img src=&quot;([^&]+)&quot;', content)
+            thumb = thumb_m.group(1) if thumb_m else ""
             items.append({
                 "id": (e.findtext("atom:id", default="", namespaces=ns) or "").split("/")[-1],
                 "author": author,
@@ -296,6 +307,10 @@ def _reddit_public_feeds(limit: int = 10, subreddit: str = "") -> Dict[str, Any]
                 "score": int(sc.group(1)) if sc else None,
                 "num_comments": int(cm.group(1)) if cm else None,
                 "url": link,
+                "created_at": (e.findtext("atom:updated", default="", namespaces=ns)
+                               or e.findtext("atom:published", default="", namespaces=ns) or ""),
+                "media_url": thumb,
+                "images": ([{"thumb": thumb, "full": thumb, "alt": title}] if thumb else []),
             })
         return {"ok": True, "items": items, "public": True}
     except Exception as e:
@@ -316,6 +331,9 @@ def hn_feeds(limit: int = 10) -> Dict[str, Any]:
                 "score": d.get("score"),
                 "num_comments": d.get("descendants"),
                 "url": d.get("url") or f"https://news.ycombinator.com/item?id={i}",
+                "created_at": d.get("time"),
+                "link": ({"url": d.get("url"), "title": d.get("title"), "description": "", "thumb": ""}
+                         if d.get("url") else None),
             })
         return {"ok": True, "items": items, "public": True}
     except Exception as e:
