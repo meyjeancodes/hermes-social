@@ -532,22 +532,142 @@ function Timeline({ status }) {
   )
 }
 
-function StreamItem({ it }) {
-  const body = it.text || it.title || ''
-  const head = it.title && it.text && it.title !== it.text ? it.title : ''
-  return h('div', { style: feedItemStyle },
-    h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 } },
-      h('span', { style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5, color: '#0b0b0b', background: SRC_COLOR[it.source] || '#888' } }, SRC_LABEL[it.source] || it.source),
-      it.author && h('span', { style: { fontSize: 12, color: '#cbd5e1', fontWeight: 600 } }, '@' + it.author),
-      h('span', { style: { fontSize: 10, color: '#666', marginLeft: 'auto' } }, ago(it.created_at)),
+function Avatar({ src, name, size = 34 }) {
+  const initial = (name || '?').replace(/^@/, '').slice(0, 1).toUpperCase()
+  if (src) {
+    return h('img', { src, alt: name || '', style: {
+      width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
+      border: '1px solid var(--ui-stroke-secondary, var(--border))', background: 'rgba(128,128,128,0.15)',
+    } })
+  }
+  return h('div', { style: {
+    width: size, height: size, borderRadius: '50%', flexShrink: 0,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'rgba(128,128,128,0.18)', color: 'var(--ui-text-tertiary, #9ca3af)',
+    fontFamily: MONO, fontSize: size * 0.4, fontWeight: 700,
+  } }, initial)
+}
+
+function ImageGrid({ images }) {
+  const n = images.length
+  if (!n) return null
+  const cols = n === 1 ? 1 : 2
+  return h('div', { style: {
+    marginTop: 8, display: 'grid', gap: 4, gridTemplateColumns: `repeat(${cols}, 1fr)`,
+    borderRadius: 10, overflow: 'hidden', border: '1px solid var(--ui-stroke-secondary, var(--border))',
+  } },
+    images.map((im, i) => h('a', { key: i, href: im.full || im.thumb, target: '_blank', rel: 'noreferrer', style: { display: 'block', lineHeight: 0 } },
+      h('img', { src: im.thumb || im.full, alt: im.alt || '', title: im.alt || '', loading: 'lazy', style: {
+        width: '100%', height: n === 1 ? 'auto' : 130, maxHeight: n === 1 ? 320 : 130,
+        objectFit: 'cover', display: 'block',
+      } })
+    ))
+  )
+}
+
+function LinkCard({ link }) {
+  if (!link || !link.url) return null
+  let host = ''
+  try { host = new URL(link.url).hostname.replace(/^www\./, '') } catch (e) { host = '' }
+  return h('a', { href: link.url, target: '_blank', rel: 'noreferrer', style: {
+    marginTop: 8, display: 'flex', gap: 10, textDecoration: 'none', color: 'inherit',
+    border: '1px solid var(--ui-stroke-secondary, var(--border))', borderRadius: 10,
+    overflow: 'hidden', background: 'rgba(128,128,128,0.06)',
+  } },
+    link.thumb && h('img', { src: link.thumb, alt: '', loading: 'lazy', style: { width: 92, height: 92, objectFit: 'cover', flexShrink: 0 } }),
+    h('div', { style: { padding: '8px 10px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 } },
+      host && h('span', { style: { fontFamily: MONO, fontSize: '0.52rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #9ca3af)' } }, host),
+      link.title && h('span', { style: { fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 } }, link.title.slice(0, 120)),
+      link.description && h('span', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #9ca3af)', lineHeight: 1.35 } }, link.description.slice(0, 140)),
+    )
+  )
+}
+
+function QuoteCard({ q }) {
+  if (!q) return null
+  return h('div', { style: {
+    marginTop: 8, padding: 10, borderRadius: 10,
+    border: '1px solid var(--ui-stroke-secondary, var(--border))', background: 'rgba(128,128,128,0.06)',
+  } },
+    h('div', { style: { display: 'flex', gap: 7, alignItems: 'center', marginBottom: 4 } },
+      h(Avatar, { src: q.avatar, name: q.name || q.author, size: 20 }),
+      h('span', { style: { fontSize: 11.5, fontWeight: 600 } }, q.name || q.author),
+      h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)' } }, '@' + q.author),
+      q.created_at && h('span', { style: { fontSize: 10, color: '#666', marginLeft: 'auto' } }, ago(q.created_at)),
     ),
-    head && h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 2 } }, head),
-    h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap' } }, body.slice(0, 600)),
-    it.media_url && h('img', { src: it.media_url, style: { marginTop: 6, maxWidth: '100%', borderRadius: 6, maxHeight: 220, objectFit: 'cover' } }),
-    h('div', { style: { marginTop: 6, fontSize: 11, color: '#888', display: 'flex', gap: 12, alignItems: 'center' } },
-      it.score != null && h('span', null, '♥ ' + it.score),
-      it.num_comments != null && h('span', null, '💬 ' + it.num_comments),
-      it.url && h('a', { href: it.url, target: '_blank', rel: 'noreferrer', style: { color: '#60a5fa', textDecoration: 'none', marginLeft: 'auto' } }, 'open ↗'),
+    h('div', { style: { fontSize: 12.5, lineHeight: 1.4, whiteSpace: 'pre-wrap' } }, (q.text || '').slice(0, 300)),
+  )
+}
+
+function VideoEmbed({ video, url }) {
+  const [play, setPlay] = React.useState(false)
+  if (!video) return null
+  if (video.youtube_id) {
+    if (play) {
+      return h('div', { style: { marginTop: 8, position: 'relative', paddingBottom: '56.25%', borderRadius: 10, overflow: 'hidden' } },
+        h('iframe', {
+          src: 'https://www.youtube-nocookie.com/embed/' + video.youtube_id + '?autoplay=1',
+          allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture',
+          allowFullScreen: true, frameBorder: '0',
+          style: { position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 },
+        })
+      )
+    }
+    return h('button', { onClick: () => setPlay(true), title: 'Play inline', style: {
+      marginTop: 8, position: 'relative', display: 'block', width: '100%', padding: 0,
+      border: '1px solid var(--ui-stroke-secondary, var(--border))', borderRadius: 10,
+      overflow: 'hidden', cursor: 'pointer', background: '#000', lineHeight: 0,
+    } },
+      video.thumb && h('img', { src: video.thumb, alt: '', loading: 'lazy', style: { width: '100%', display: 'block', opacity: 0.85 } }),
+      h('span', { style: {
+        position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+        width: 52, height: 52, borderRadius: '50%', background: 'rgba(0,0,0,0.65)',
+        border: '2px solid rgba(255,255,255,0.9)', color: '#fff', fontSize: 20,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', paddingLeft: 4,
+      } }, '▶'),
+    )
+  }
+  if (video.playlist) {
+    return h('video', { controls: true, poster: video.thumb || undefined, src: video.playlist,
+      style: { marginTop: 8, width: '100%', borderRadius: 10, maxHeight: 320, background: '#000' } })
+  }
+  return null
+}
+
+function StreamItem({ it }) {
+  const body = it.text || ''
+  const heading = it.title && it.title !== it.text ? it.title : ''
+  const display = it.source === 'bluesky' || it.source === 'mastodon' ? (it.title || it.author) : ''
+  const images = it.images || []
+  return h('div', { style: cardShell },
+    h('div', { style: { display: 'flex', gap: 10 } },
+      h(Avatar, { src: it.avatar, name: display || it.author || it.source }),
+      h('div', { style: { flex: 1, minWidth: 0 } },
+        h('div', { style: { display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' } },
+          display && h('span', { style: { fontSize: 13, fontWeight: 700 } }, display),
+          it.author && h('span', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #9ca3af)' } }, '@' + it.author),
+          h('span', { style: { fontSize: 10, color: '#666' } }, '· ' + ago(it.created_at)),
+          h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.48rem', fontWeight: 700,
+            letterSpacing: '0.12em', textTransform: 'uppercase', padding: '2px 6px', borderRadius: 4,
+            color: SRC_COLOR[it.source] || '#9ca3af',
+            border: '1px solid ' + (SRC_COLOR[it.source] || '#555') + '55',
+            background: (SRC_COLOR[it.source] || '#888') + '18' } }, SRC_LABEL[it.source] || it.source),
+        ),
+        heading && h('div', { style: { fontSize: 13.5, fontWeight: 600, lineHeight: 1.35, marginTop: 4 } }, heading),
+        body && h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', marginTop: heading ? 3 : 4, overflowWrap: 'anywhere' } }, body.slice(0, 700)),
+        h(VideoEmbed, { video: it.video, url: it.url }),
+        images.length > 0 && h(ImageGrid, { images }),
+        !it.video && images.length === 0 && h(LinkCard, { link: it.link }),
+        h('div', { style: { marginTop: 8, display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)' } },
+          it.score != null && h('span', null, '♥ ' + it.score),
+          it.num_comments != null && h('span', null, '💬 ' + it.num_comments),
+          it.url && h('a', { href: it.url, target: '_blank', rel: 'noreferrer', style: {
+            marginLeft: 'auto', color: 'var(--ui-text-tertiary, #9ca3af)', textDecoration: 'none',
+            fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.12em', textTransform: 'uppercase',
+          } }, 'Open ↗'),
+        ),
+        h(QuoteCard, { q: it.quote }),
+      )
     )
   )
 }
@@ -685,6 +805,7 @@ const cardStyle = { border: '1px solid var(--border)', borderRadius: 10, padding
 const secTitleStyle = { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#888', marginBottom: 4 }
 const secBodyStyle = { fontSize: 12, color: '#666' }
 const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--border)', textDecoration: 'none', color: 'var(--text)', background: 'rgba(128,128,128,0.06)' }
+const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, var(--border))', background: 'rgba(128,128,128,0.05)' }
 
 function dotStyle(on) {
   return {
@@ -715,6 +836,9 @@ function platBtn(active, configured, dim) {
     opacity: dim ? 0.6 : 1,
   }
 }
+
+// Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources }
 
 export default {
   id: ID,
