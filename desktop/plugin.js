@@ -1056,19 +1056,12 @@ function Seg({ active, onClick, label }) {
     fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
     letterSpacing: '0.14em', textTransform: 'uppercase',
     color: active ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
-    background: active ? 'var(--ui-bg-elevated, rgba(127,127,127,0.14))' : 'transparent',
+    background: active ? 'rgba(127,127,127,0.14)' : 'transparent',
     border: '1px solid ' + (active ? 'var(--ui-stroke-secondary, #2a2f3a)' : 'transparent'),
   } }, label)
 }
 
 // ── Sources (credential-free feed config) ─────────────────────────────────────
-const SRC_FIELDS = [
-  { k: 'bluesky_handle', label: 'Bluesky handle', ph: 'someone.bsky.social' },
-  { k: 'mastodon_instance', label: 'Mastodon instance', ph: 'fosstodon.org' },
-  { k: 'youtube_channel_id', label: 'YouTube channel ID', ph: 'UCxxxxxxxxxxxxxxxxxxxxxx' },
-  { k: 'rss_url', label: 'RSS / Atom feed URL', ph: 'https://example.com/feed' },
-  { k: 'subreddit', label: 'Subreddit', ph: 'robotics' },
-]
 const TOGGLEABLE = ['bluesky', 'mastodon', 'youtube', 'rss', 'hn', 'reddit']
 
 function Sources() {
@@ -1216,14 +1209,14 @@ function FeedItem({ it, meta }) {
 // --bg/--text/--border/--accent, which are defined NOWHERE in the app's CSS, so
 // every one silently fell back to a hardcoded literal — that was the black
 // boxes and the invisible banner.
-const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--ui-text-primary, #e7e9ee)', background: 'var(--ui-bg-primary, transparent)', fontFamily: 'var(--dt-font-sans, system-ui, sans-serif)' }
+const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--ui-text-primary, #e7e9ee)', fontFamily: 'var(--dt-font-sans, system-ui, sans-serif)' }
 const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' }
-const fieldStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'var(--ui-bg-elevated, rgba(127,127,127,0.10))', color: 'var(--ui-text-primary, #e7e9ee)', fontSize: 12.5, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
-const cardStyle = { border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, padding: 12, background: 'var(--ui-bg-elevated, rgba(127,127,127,0.06))' }
+const fieldStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'rgba(127,127,127,0.10)', color: 'var(--ui-text-primary, #e7e9ee)', fontSize: 12.5, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
+const cardStyle = { border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, padding: 12, background: 'rgba(127,127,127,0.06)' }
 const secTitleStyle = { fontFamily: MONO, fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ui-text-tertiary, #8b93a7)', marginBottom: 5 }
 const secBodyStyle = { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' }
-const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', textDecoration: 'none', color: 'var(--ui-text-primary, #e7e9ee)', background: 'var(--ui-bg-elevated, rgba(127,127,127,0.06))' }
-const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'var(--ui-bg-elevated, rgba(127,127,127,0.05))' }
+const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', textDecoration: 'none', color: 'var(--ui-text-primary, #e7e9ee)', background: 'rgba(127,127,127,0.06)' }
+const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'rgba(127,127,127,0.05)' }
 
 function dotStyle(on) {
   return {

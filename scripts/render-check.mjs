@@ -33,7 +33,12 @@ for (const t of dead) {
   const n = pluginSrc.split(t).length - 1
   if (n) throw new Error(`${n} use(s) of undefined token ${t} — will render as a black box`)
 }
-console.log('no undefined design tokens')
+// --ui-bg-* are color-mix chrome fills. Painting them inside a plugin pane
+// washes the whole surface grey instead of letting the host background show
+// through; the shipped Entertainment pack uses zero of them for this reason.
+const bgUses = pluginSrc.split('--ui-bg-').length - 1
+if (bgUses) throw new Error(`${bgUses} use(s) of --ui-bg-* — these grey out the pane; use a translucent rgba overlay instead`)
+console.log('no undefined design tokens, no --ui-bg-* pane fills')
 
 // Force every tab to actually execute: stub useState so the pane's first
 // useState (the tab) returns each tab key in turn. Catches TDZ/hook errors in
