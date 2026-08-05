@@ -41,7 +41,6 @@ const PLATFORMS = [
     { k: 'X_BEARER_TOKEN', label: 'Bearer Token', secret: true },
     { k: 'X_ACCESS_TOKEN', label: 'Access Token', secret: true },
     { k: 'X_ACCESS_TOKEN_SECRET', label: 'Access Token Secret', secret: true },
-    { k: 'X_USERNAME', label: '@username (for embedded timeline)' },
   ]},
   { key: 'reddit', label: 'Reddit', fields: [
     { k: 'REDDIT_CLIENT_ID', label: 'Client ID', secret: true },
@@ -136,7 +135,6 @@ function SocialPane() {
       h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
-      h(Tab, { active: tab === 'xsite', onClick: () => setTab('xsite'), label: 'X Site' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
       h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' } },
         PLATFORMS.map((p) =>
@@ -151,7 +149,6 @@ function SocialPane() {
       : tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
-      : tab === 'xsite' ? h(XBrowser, { initialUrl: 'https://x.com/home' })
       : h(SettingsHub, { status, refresh: loadStatus })
   )
 }
@@ -399,14 +396,13 @@ function MassPost({ status, refresh }) {
 // ── Feeds ──────────────────────────────────────────────────────────────────────
 function Feeds({ status, refresh }) {
   const [plat, setPlat] = React.useState('all')
-  const [feed, setFeed] = React.useState('home')
+  const [xView, setXView] = React.useState('live') // 'live' = full X webview, 'feed' = API posts
   const [items, setItems] = React.useState({})
   const [loading, setLoading] = React.useState(false)
   const [err, setErr] = React.useState(null)
   const configured = (status && status.configured) || {}
-  const xUser = (status && status.meta && status.meta.x_username) || ''
   const load = () => {
-    if (plat !== 'x' && plat !== 'all') { // X embed needs no API fetch
+    if (plat !== 'x' && plat !== 'all') { // X has no API feed here (use the Live webview)
       setLoading(true); setErr(null)
       const q = 'platform=' + plat + '&limit=12'
       fetch(API + '/feeds?' + q).then((r) => r.json()).then((d) => setItems(d)).catch((e) => setErr(String(e))).finally(() => setLoading(false))
@@ -430,27 +426,35 @@ function Feeds({ status, refresh }) {
       h('button', { onClick: () => setPlat('all'), style: platBtn(plat === 'all') }, 'All'),
       ...PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlat(p.key), style: platBtn(plat === p.key, configured[p.key]) }, p.label)),
     ),
-    (plat === 'all' || plat === 'x') && h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexWrap: 'wrap' } },
-      h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'X feed:'),
-      h('button', { onClick: () => setFeed('embed'), style: platBtn(feed === 'embed') }, 'Timeline'),
-      h('button', { onClick: () => setFeed('home'), style: platBtn(feed === 'home') }, 'Home*'),
-      h('button', { onClick: () => setFeed('foryou'), style: platBtn(feed === 'foryou') }, 'For You*'),
-      h('button', { onClick: () => setFeed('mentions'), style: platBtn(feed === 'mentions') }, 'Mentions'),
-      h('button', { onClick: load, disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh')
-    ),
-    (plat === 'all' || plat === 'x') && feed === 'foryou' && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#a78bfa' } }, '* API reads need a paid X tier — these open the real X site.'),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
-      keys.map((k) => {
-        const meta = pmeta[k]; const sec = items[k]; const list = (sec && sec.items) || []
-        // X: real embed timeline (no API cost) when a username is set
-        if (k === 'x' && (plat === 'all' || plat === 'x') && feed === 'embed') {
-          return h('div', { key: k },
-            h('div', { style: secTitleStyle }, 'X — Timeline'),
-            xUser ? h(XTimeline, { username: xUser })
-              : h(XTimeline, { username: 'blackcatrobotics' })
+    (plat === 'all' || plat === 'x') && h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
+      h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+        h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'X:'),
+        h('button', { onClick: () => setXView('live'), style: platBtn(xView === 'live') }, 'Live site'),
+        h('button', { onClick: () => setXView('feed'), style: platBtn(xView === 'feed', configured.x) }, 'Feed*'),
+        xView === 'feed' && h('button', { onClick: load, disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh'),
+      ),
+      xView === 'feed'
+        ? h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
+            (() => {
+              const sec = items.x; const list = (sec && sec.items) || []
+              return [
+                !configured.x && h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '* API reads need a paid X tier — the Live site tab works without one.'),
+                !sec && h('div', { style: secBodyStyle }, 'loading…'),
+                sec && !sec.ok && (xFreeTier(sec.error) ? h(XFreeTierFallback, { onCompose: () => {} })
+                  : h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ ' + (sec.error || 'not available'))),
+                sec && sec.ok && list.length === 0 && h('div', { style: secBodyStyle }, 'nothing yet'),
+                list.map((it) => h(FeedItem, { key: it.id, it, meta: pmeta.x })),
+              ]
+            })()
           )
-        }
+        : h('div', { style: { flex: 1, minHeight: 0 } },
+            h(XBrowser, { initialUrl: 'https://x.com/home' })
+          )
+    ),
+    h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
+      keys.filter((k) => k !== 'x' || (plat !== 'all' && plat !== 'x')).map((k) => {
+        const meta = pmeta[k]; const sec = items[k]; const list = (sec && sec.items) || []
         // unconfigured, no real error -> compact chip (declutter)
         if (!configured[k] && !(sec && !sec.ok && !xFreeTier(sec.error))) {
           return h(ConfigChip, { key: k, label: meta.name })
@@ -1163,9 +1167,9 @@ function ConfigChip({ label }) {
 }
 
 // ── X Site (full interactive X in a webview) ──────────────────────────────────
-// A normal <iframe> to x.com is BLOCKED by X-Frame-Options: DENY, so the
-// read-only embed widget (XTimeline) is the most an iframe can show. To get the
-// FULL interactive site — the thing Marco (@mfranz_on) embedded — we use an
+// A normal <iframe> to x.com is BLOCKED by X-Frame-Options: DENY, so a
+// read-only embed is the most an iframe can show. To get the FULL interactive
+// site — the thing Marco (@mfranz_on) embedded — we use an
 // Electron <webview> guest. The Hermes chat window sets webviewTag: true
 // (electron/session-windows.cjs) with no CSP webview-src restriction, so a
 // webview is a real top-level navigation that ignores X-Frame-Options. We give
@@ -1265,35 +1269,6 @@ function XBrowser({ initialUrl }) {
     }),
     h('div', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)', padding: '4px 10px', borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)', fontFamily: MONO, letterSpacing: '0.08em' } },
       'Full X inside Hermes — log in once, stays logged in. Not an API feed.'),
-  )
-}
-
-// Real X timeline via the official Twitter embed widget (no API key, no cost).
-function XTimeline({ username }) {
-  const ref = React.useRef(null)
-  React.useEffect(() => {
-    const id = 'twttr-wjs'
-    if (!document.getElementById(id)) {
-      const s = document.createElement('script')
-      s.id = id; s.src = 'https://platform.twitter.com/widgets.js'; s.async = true
-      document.body.appendChild(s)
-    }
-    const render = () => {
-      if (window.twttr && window.twttr.widgets && ref.current) {
-        ref.current.innerHTML = ''
-        window.twttr.widgets.createTimeline(
-          { sourceType: 'profile', screenName: username },
-          ref.current,
-          { height: 600, theme: 'dark' }
-        )
-      } else {
-        setTimeout(render, 300)
-      }
-    }
-    render()
-  }, [username])
-  return h('div', { ref, style: { minHeight: 200 } },
-    h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Loading @' + username + ' timeline…')
   )
 }
 
