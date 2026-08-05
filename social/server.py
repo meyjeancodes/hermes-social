@@ -9,16 +9,13 @@ in ~/.hermes/.env.
 from __future__ import annotations
 
 import json
-import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from . import config, platforms, space
+from . import config, platforms
 
 HOST = "127.0.0.1"
 PORT = 8731
-
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "web")
 
 
 def _status() -> dict:
@@ -35,8 +32,6 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     if method == "GET" and path == "/status":
         config.reload()
         return _status()
-    if method == "GET" and path in ("/space", "/space/"):
-        return _serve_static("space.html")
     if method == "GET" and path == "/feeds":
         config.reload()
         limit = int(params.get("limit", ["10"])[0])
@@ -57,19 +52,6 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     if method == "POST" and seg and seg[0] == "mass":
         config.reload()
         return _mass_post(body)
-    # ── Hermes Space (Myspace-style community) ──────────────────────────────
-    if method == "GET" and seg and seg[0] == "space":
-        if len(seg) > 1 and seg[1] == "posts":
-            return space.get_posts(limit=int(params.get("limit", ["50"])[0]), nick=params.get("nick", [""])[0])
-        if len(seg) > 1 and seg[1] == "users":
-            return space.get_users()
-        return {"ok": False, "error": "unknown space route"}
-    if method == "POST" and seg and seg[0] == "space":
-        if len(seg) > 1 and seg[1] == "post":
-            return space.add_post(body.get("nick", ""), body.get("text", ""), song=body.get("song", ""))
-        if len(seg) > 1 and seg[1] == "user":
-            return space.ensure_user(body.get("nick", ""), bio=body.get("bio", ""), song=body.get("song", ""))
-        return {"ok": False, "error": "unknown space route"}
     if method == "POST" and seg and seg[0] == "reply":
         platform = seg[1] if len(seg) > 1 else body.get("platform")
         return _reply(platform, body)
@@ -124,11 +106,6 @@ def _feeds(platform: str, limit: int, feed: str = "") -> dict:
     if platform in ("all", "hn"):
         out["hn"] = platforms.hn_feeds(limit)
     return out
-
-
-def _serve_static(name: str) -> dict:
-    """Return a marker the Handler turns into a static file response."""
-    return {"__static__": name}
 
 
 def _get(key: str, default: str = "") -> str:
@@ -224,20 +201,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _send_static(self, name: str) -> None:
-        path = os.path.join(STATIC_DIR, name)
-        if not os.path.exists(path):
-            self._send(404, {"ok": False, "error": "not found"})
-            return
-        with open(path, "rb") as f:
-            data = f.read()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
     def log_message(self, *args):  # quiet
         pass
 
@@ -249,10 +212,7 @@ class Handler(BaseHTTPRequestHandler):
             u = urlparse(self.path)
             params = parse_qs(u.query)
             res = _dispatch("GET", u.path, {}, params)
-            if isinstance(res, dict) and "__static__" in res:
-                self._send_static(res["__static__"])
-            else:
-                self._send(200, res)
+            self._send(200, res)
         except Exception as e:  # never crash the server
             self._send(500, {"ok": False, "error": str(e)})
 
@@ -267,10 +227,7 @@ class Handler(BaseHTTPRequestHandler):
             u = urlparse(self.path)
             params = parse_qs(u.query)
             res = _dispatch("POST", u.path, body, params)
-            if isinstance(res, dict) and "__static__" in res:
-                self._send_static(res["__static__"])
-            else:
-                self._send(200, res)
+            self._send(200, res)
         except Exception as e:
             self._send(500, {"ok": False, "error": str(e)})
 
