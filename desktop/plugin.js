@@ -88,27 +88,28 @@ function ago(when) {
 const MONO = 'var(--dt-font-mono, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace)'
 const JH = { 'Content-Type': 'application/json' }
 
-function Banner({ nConn, total, onRefresh }) {
+function Banner({ nConn, total }) {
   return h('div', { style: {
-    display: 'flex', alignItems: 'center', gap: 10,
-    padding: '10px 12px 8px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))',
+    display: 'flex', alignItems: 'baseline', gap: 9, flexShrink: 0,
+    padding: '13px 14px 11px',
+    borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
   } },
     h('span', { style: {
-      fontFamily: MONO, fontSize: '0.72rem', fontWeight: 700,
-      letterSpacing: '0.34em', textTransform: 'uppercase',
-      color: 'var(--ui-text-primary, var(--text))',
+      fontFamily: MONO, fontSize: '0.94rem', fontWeight: 700,
+      letterSpacing: '0.30em', textTransform: 'uppercase',
+      color: 'var(--ui-text-primary, #e7e9ee)', lineHeight: 1,
     } }, 'Hermes'),
     h('span', { style: {
-      fontFamily: MONO, fontSize: '0.72rem', fontWeight: 400,
-      letterSpacing: '0.34em', textTransform: 'uppercase',
-      color: 'var(--ui-text-tertiary, #6b7280)',
-    } }, '⁄ Social'),
+      fontFamily: MONO, fontSize: '0.94rem', fontWeight: 300,
+      letterSpacing: '0.30em', textTransform: 'uppercase',
+      color: 'var(--ui-text-tertiary, #8b93a7)', lineHeight: 1,
+    } }, 'Social'),
     h('span', { style: { flex: 1 } }),
-    h('span', { style: {
-      fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em',
-      textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)',
-      border: '1px solid var(--ui-stroke-secondary, var(--border))',
-      borderRadius: 4, padding: '2px 6px', background: 'rgba(255,255,255,0.03)',
+    h('span', { title: nConn + ' of ' + total + ' platforms have credentials', style: {
+      fontFamily: MONO, fontSize: '0.52rem', letterSpacing: '0.16em',
+      textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)',
+      border: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
+      borderRadius: 999, padding: '3px 8px', lineHeight: 1,
     } }, nConn + '/' + total + ' linked'),
   )
 }
@@ -135,7 +136,6 @@ function SocialPane() {
       h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
-      h(Tab, { active: tab === 'sources', onClick: () => setTab('sources'), label: 'Sources' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
       h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' } },
         PLATFORMS.map((p) =>
@@ -147,19 +147,18 @@ function SocialPane() {
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     tab === 'timeline' ? h(Timeline, { status })
       : tab === 'inbox' ? h(Inbox, { status })
-      : tab === 'sources' ? h(Sources, {})
       : tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
-      : h(Settings, { status, refresh: loadStatus })
+      : h(SettingsHub, { status, refresh: loadStatus })
   )
 }
 
 function Tab({ active, onClick, label }) {
   return h('button', { onClick, style: {
-    background: active ? 'var(--accent, #3b82f6)' : 'transparent',
+    background: active ? 'var(--ui-blue, #3b82f6)' : 'transparent',
     color: active ? '#fff' : 'var(--ui-text-tertiary, #888)',
-    border: '1px solid ' + (active ? 'transparent' : 'var(--ui-stroke-secondary, var(--border))'),
+    border: '1px solid ' + (active ? 'transparent' : 'var(--ui-stroke-secondary, #2a2f3a)'),
     borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
     fontFamily: MONO, fontSize: '0.58rem', fontWeight: 600,
     letterSpacing: '0.14em', textTransform: 'uppercase', whiteSpace: 'nowrap', flexShrink: 0,
@@ -170,7 +169,7 @@ function Tab({ active, onClick, label }) {
 function Settings({ status, refresh }) {
   const configured = (status && status.configured) || {}
   return h('div', { style: { overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 14 } },
-    h('div', { style: { fontSize: 12, color: '#888' } }, 'Log in per platform, then hit “Test” to make a real API call and confirm it works before you post.'),
+    h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Log in per platform, then hit “Test” to make a real API call and confirm it works before you post.'),
     PLATFORMS.map((p) => h(PlatformCard, { key: p.key, p, connected: !!configured[p.key], refresh }))
   )
 }
@@ -211,7 +210,7 @@ function PlatformCard({ p, connected, refresh }) {
     ),
     p.fields.map((f) =>
       h('div', { key: f.k, style: { marginBottom: 8 } },
-        h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 3 } }, f.label),
+        h('label', { style: { fontSize: 11, color: 'var(--ui-text-secondary, #b6bccb)', display: 'block', marginBottom: 3 } }, f.label),
         h('input', {
           type: (f.secret && !show) ? 'password' : 'text',
           placeholder: f.shared ? 'shared with Facebook' : f.label,
@@ -223,7 +222,7 @@ function PlatformCard({ p, connected, refresh }) {
     h('div', { style: { display: 'flex', gap: 8, marginTop: 4, alignItems: 'center' } },
       h('button', { onClick: save, disabled: saving, style: btnStyle(false) }, saving ? 'Saving…' : 'Save'),
       h('button', { onClick: test, disabled: testing, style: btnStyle(true) }, testing ? 'Testing…' : 'Test'),
-      p.fields.some((f) => f.secret) && h('label', { style: { fontSize: 11, color: '#888', display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' } },
+      p.fields.some((f) => f.secret) && h('label', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)', display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' } },
         h('input', { type: 'checkbox', checked: show, onChange: (e) => setShow(e.target.checked) }), 'show'),
       saved && h('span', { style: { fontSize: 11, color: '#22c55e' } }, 'saved')
     ),
@@ -280,7 +279,7 @@ function Compose({ status, refresh }) {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
       h('button', { onClick: send, disabled: busy || disabled || over || !text.trim(), style: btnStyle(false, busy || disabled || over || !text.trim()) }, busy ? 'Sending…' : (platform === 'twitch' ? (twitchAction === 'title' ? 'Update' : 'Send') : 'Post')),
       platform === 'x' && h('a', { href: xIntent(text), target: '_blank', rel: 'noreferrer', style: { ...btnStyle(true), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }, title: 'Open X composer with this text prefilled' }, 'Open composer ↗'),
-      text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? '#f87171' : '#888' } }, `${text.length}/280`),
+      text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? '#f87171' : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
     ),
     result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)', color: result.ok ? '#22c55e' : '#f87171', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
   )
@@ -351,8 +350,8 @@ function MassPost({ status, refresh }) {
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, padding: 12, overflowY: 'auto' } },
     h('textarea', { placeholder: 'One draft — posted to every platform you pick below.', value: text, onChange: (e) => setText(e.target.value), rows: 4, style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' } }),
-    text.length > 0 && h('div', { style: { fontSize: 11, color: over ? '#f87171' : '#888' } }, `${text.length}/280`),
-    h('div', { style: { fontSize: 12, color: '#888' } }, 'Post to:'),
+    text.length > 0 && h('div', { style: { fontSize: 11, color: over ? '#f87171' : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
+    h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Post to:'),
     allConn.length === 0 && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, 'No platforms connected yet — add creds in Settings (and hit Test).'),
     h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
       allConn.map((k) => h('button', { key: k, onClick: () => toggle(k), style: platBtn(sel[k], true) }, PLATFORMS.find((p) => p.key === k).label))
@@ -384,7 +383,7 @@ function MassPost({ status, refresh }) {
     ),
     results && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
       Object.entries(results).map(([k, v]) =>
-        h('div', { key: k, style: { padding: 10, borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid var(--border)' } },
+        h('div', { key: k, style: { padding: 10, borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
           h('div', { style: { fontWeight: 600, marginBottom: 2 } }, PLATFORMS.find((p) => p.key === k) ? PLATFORMS.find((p) => p.key === k).label : k),
           v.ok && h('div', { style: { color: '#22c55e' } }, '✓ ' + (v.url || v.id || 'Posted')),
           v.ok === false && v.link && h('a', { href: v.link, target: '_blank', rel: 'noreferrer', style: { color: '#60a5fa', textDecoration: 'none' } }, '↗ ' + (v.note || 'Open to post on X')),
@@ -425,12 +424,12 @@ function Feeds({ status, refresh }) {
   }
   const keys = plat === 'all' ? ['x', 'reddit', 'facebook', 'instagram', 'tiktok', 'twitch', 'hn'] : [plat]
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', flexWrap: 'wrap' } },
       h('button', { onClick: () => setPlat('all'), style: platBtn(plat === 'all') }, 'All'),
       ...PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlat(p.key), style: platBtn(plat === p.key, configured[p.key]) }, p.label)),
     ),
-    (plat === 'all' || plat === 'x') && h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', borderBottom: '1px solid var(--border)', alignItems: 'center', flexWrap: 'wrap' } },
-      h('span', { style: { fontSize: 11, color: '#888' } }, 'X feed:'),
+    (plat === 'all' || plat === 'x') && h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'X feed:'),
       h('button', { onClick: () => setFeed('embed'), style: platBtn(feed === 'embed') }, 'Timeline'),
       h('button', { onClick: () => setFeed('home'), style: platBtn(feed === 'home') }, 'Home*'),
       h('button', { onClick: () => setFeed('foryou'), style: platBtn(feed === 'foryou') }, 'For You*'),
@@ -573,7 +572,7 @@ function Timeline({ status }) {
   const toggle = (k) => setOnly((o) => ({ ...o, [k]: !o[k] }))
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
       h('input', { placeholder: 'Search the whole timeline…', value: q,
         onChange: (e) => setQ(e.target.value),
         onKeyDown: (e) => { if (e.key === 'Enter') reload() },
@@ -581,9 +580,9 @@ function Timeline({ status }) {
       h('button', { onClick: reload, disabled: loading, style: platBtn(false) }, loading ? '↻…' : '↻'),
       h('button', { onClick: () => setAuto((a) => !a), title: 'check for new posts every 60s', style: platBtn(auto) }, auto ? '⏱ on' : '⏱ off'),
     ),
-    h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
       avail.map((k) => h('button', { key: k, onClick: () => toggle(k),
-        style: { ...platBtn(!!only[k]), borderColor: only[k] ? SRC_COLOR[k] : 'var(--border)' } }, SRC_LABEL[k] || k)),
+        style: { ...platBtn(!!only[k]), borderColor: only[k] ? SRC_COLOR[k] : 'var(--ui-stroke-secondary, #2a2f3a)' } }, SRC_LABEL[k] || k)),
       Object.keys(only).some((k) => only[k]) && h('button', { onClick: () => setOnly({}), style: { ...platBtn(false), marginLeft: 'auto' } }, 'clear'),
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
@@ -592,7 +591,7 @@ function Timeline({ status }) {
     pending.length > 0 && h('button', { onClick: showPending, style: {
       position: 'absolute', top: 96, left: '50%', transform: 'translateX(-50%)', zIndex: 5,
       padding: '6px 14px', borderRadius: 999, cursor: 'pointer',
-      background: 'var(--accent, #3b82f6)', color: '#fff', border: 'none',
+      background: 'var(--ui-blue, #3b82f6)', color: '#fff', border: 'none',
       fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
       letterSpacing: '0.14em', textTransform: 'uppercase',
       boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
@@ -604,7 +603,7 @@ function Timeline({ status }) {
       items.length > 0 && h('div', { style: {
         padding: '10px 0 4px', textAlign: 'center', fontFamily: MONO,
         fontSize: '0.5rem', letterSpacing: '0.16em', textTransform: 'uppercase',
-        color: 'var(--ui-text-tertiary, #6b7280)',
+        color: 'var(--ui-text-tertiary, #8b93a7)',
       } }, loading ? 'loading more…' : (maxedOut || per >= 60) ? '· end of feed ·' : 'scroll for more'),
     )
   )
@@ -615,13 +614,13 @@ function Avatar({ src, name, size = 34 }) {
   if (src) {
     return h('img', { src, alt: name || '', style: {
       width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
-      border: '1px solid var(--ui-stroke-secondary, var(--border))', background: 'rgba(128,128,128,0.15)',
+      border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'rgba(128,128,128,0.15)',
     } })
   }
   return h('div', { style: {
     width: size, height: size, borderRadius: '50%', flexShrink: 0,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: 'rgba(128,128,128,0.18)', color: 'var(--ui-text-tertiary, #9ca3af)',
+    background: 'rgba(128,128,128,0.18)', color: 'var(--ui-text-tertiary, #8b93a7)',
     fontFamily: MONO, fontSize: size * 0.4, fontWeight: 700,
   } }, initial)
 }
@@ -632,7 +631,7 @@ function ImageGrid({ images }) {
   const cols = n === 1 ? 1 : 2
   return h('div', { style: {
     marginTop: 8, display: 'grid', gap: 4, gridTemplateColumns: `repeat(${cols}, 1fr)`,
-    borderRadius: 10, overflow: 'hidden', border: '1px solid var(--ui-stroke-secondary, var(--border))',
+    borderRadius: 10, overflow: 'hidden', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
   } },
     images.map((im, i) => h('a', { key: i, href: im.full || im.thumb, target: '_blank', rel: 'noreferrer', style: { display: 'block', lineHeight: 0 } },
       h('img', { src: im.thumb || im.full, alt: im.alt || '', title: im.alt || '', loading: 'lazy', style: {
@@ -649,14 +648,14 @@ function LinkCard({ link }) {
   try { host = new URL(link.url).hostname.replace(/^www\./, '') } catch (e) { host = '' }
   return h('a', { href: link.url, target: '_blank', rel: 'noreferrer', style: {
     marginTop: 8, display: 'flex', gap: 10, textDecoration: 'none', color: 'inherit',
-    border: '1px solid var(--ui-stroke-secondary, var(--border))', borderRadius: 10,
+    border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10,
     overflow: 'hidden', background: 'rgba(128,128,128,0.06)',
   } },
     link.thumb && h('img', { src: link.thumb, alt: '', loading: 'lazy', style: { width: 92, height: 92, objectFit: 'cover', flexShrink: 0 } }),
     h('div', { style: { padding: '8px 10px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 } },
-      host && h('span', { style: { fontFamily: MONO, fontSize: '0.52rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #9ca3af)' } }, host),
+      host && h('span', { style: { fontFamily: MONO, fontSize: '0.52rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)' } }, host),
       link.title && h('span', { style: { fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 } }, link.title.slice(0, 120)),
-      link.description && h('span', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #9ca3af)', lineHeight: 1.35 } }, link.description.slice(0, 140)),
+      link.description && h('span', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #8b93a7)', lineHeight: 1.35 } }, link.description.slice(0, 140)),
     )
   )
 }
@@ -665,13 +664,13 @@ function QuoteCard({ q }) {
   if (!q) return null
   return h('div', { style: {
     marginTop: 8, padding: 10, borderRadius: 10,
-    border: '1px solid var(--ui-stroke-secondary, var(--border))', background: 'rgba(128,128,128,0.06)',
+    border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'rgba(128,128,128,0.06)',
   } },
     h('div', { style: { display: 'flex', gap: 7, alignItems: 'center', marginBottom: 4 } },
       h(Avatar, { src: q.avatar, name: q.name || q.author, size: 20 }),
       h('span', { style: { fontSize: 11.5, fontWeight: 600 } }, q.name || q.author),
-      h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)' } }, '@' + q.author),
-      q.created_at && h('span', { style: { fontSize: 10, color: '#666', marginLeft: 'auto' } }, ago(q.created_at)),
+      h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '@' + q.author),
+      q.created_at && h('span', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)', marginLeft: 'auto' } }, ago(q.created_at)),
     ),
     h('div', { style: { fontSize: 12.5, lineHeight: 1.4, whiteSpace: 'pre-wrap' } }, (q.text || '').slice(0, 300)),
   )
@@ -693,7 +692,7 @@ function VideoEmbed({ video, url }) {
     }
     return h('button', { onClick: () => setPlay(true), title: 'Play inline', style: {
       marginTop: 8, position: 'relative', display: 'block', width: '100%', padding: 0,
-      border: '1px solid var(--ui-stroke-secondary, var(--border))', borderRadius: 10,
+      border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10,
       overflow: 'hidden', cursor: 'pointer', background: '#000', lineHeight: 0,
     } },
       video.thumb && h('img', { src: video.thumb, alt: '', loading: 'lazy', style: { width: '100%', display: 'block', opacity: 0.85 } }),
@@ -723,24 +722,24 @@ function StreamItem({ it }) {
       h('div', { style: { flex: 1, minWidth: 0 } },
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' } },
           display && h('span', { style: { fontSize: 13, fontWeight: 700 } }, display),
-          it.author && h('span', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #9ca3af)' } }, '@' + it.author),
-          h('span', { style: { fontSize: 10, color: '#666' } }, '· ' + ago(it.created_at)),
+          it.author && h('span', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '@' + it.author),
+          h('span', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '· ' + ago(it.created_at)),
           h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.48rem', fontWeight: 700,
             letterSpacing: '0.12em', textTransform: 'uppercase', padding: '2px 6px', borderRadius: 4,
-            color: SRC_COLOR[it.source] || '#9ca3af',
-            border: '1px solid ' + (SRC_COLOR[it.source] || '#555') + '55',
-            background: (SRC_COLOR[it.source] || '#888') + '18' } }, SRC_LABEL[it.source] || it.source),
+            color: SRC_COLOR[it.source] || 'var(--ui-text-tertiary, #8b93a7)',
+            border: '1px solid ' + (SRC_COLOR[it.source] || 'var(--ui-stroke-secondary, #2a2f3a)') + '55',
+            background: (SRC_COLOR[it.source] || 'var(--ui-text-tertiary, #8b93a7)') + '18' } }, SRC_LABEL[it.source] || it.source),
         ),
         heading && h('div', { style: { fontSize: 13.5, fontWeight: 600, lineHeight: 1.35, marginTop: 4 } }, heading),
         body && h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', marginTop: heading ? 3 : 4, overflowWrap: 'anywhere' } }, body.slice(0, 700)),
         h(VideoEmbed, { video: it.video, url: it.url }),
         images.length > 0 && h(ImageGrid, { images }),
         !it.video && images.length === 0 && h(LinkCard, { link: it.link }),
-        h('div', { style: { marginTop: 8, display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)' } },
+        h('div', { style: { marginTop: 8, display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } },
           it.score != null && h('span', null, '♥ ' + it.score),
           it.num_comments != null && h('span', null, '💬 ' + it.num_comments),
           it.url && h('a', { href: it.url, target: '_blank', rel: 'noreferrer', style: {
-            marginLeft: 'auto', color: 'var(--ui-text-tertiary, #9ca3af)', textDecoration: 'none',
+            marginLeft: 'auto', color: 'var(--ui-text-tertiary, #8b93a7)', textDecoration: 'none',
             fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.12em', textTransform: 'uppercase',
           } }, 'Open ↗'),
         ),
@@ -754,7 +753,7 @@ function StreamItem({ it }) {
 function Inbox({ status }) {
   const [mode, setMode] = React.useState('messages')
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
       h(Tab, { active: mode === 'messages', onClick: () => setMode('messages'), label: 'Messages' }),
       h(Tab, { active: mode === 'activity', onClick: () => setMode('activity'), label: 'Activity' }),
     ),
@@ -804,29 +803,29 @@ function Messages() {
 
   return h('div', { style: { flex: 1, display: 'flex', minHeight: 0 } },
     // ── conversation list ──
-    h('div', { style: { width: 210, borderRight: '1px solid var(--ui-stroke-secondary, var(--border))', display: 'flex', flexDirection: 'column' } },
-      h('div', { style: { padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+    h('div', { style: { width: 210, borderRight: '1px solid var(--ui-stroke-secondary, #2a2f3a)', display: 'flex', flexDirection: 'column' } },
+      h('div', { style: { padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
         h('button', { onClick: () => setShowAdd(true), style: { ...platBtn(false), width: '100%' } }, '+ New conversation'),
       ),
       h('div', { style: { flex: 1, overflowY: 'auto' } },
         threads.length === 0 && h('div', { style: { ...secBodyStyle, padding: 10 } }, 'No conversations yet.'),
         threads.map((t) => h('button', { key: t.thread, onClick: () => setActive(t.thread), style: {
           display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-          padding: '9px 10px', border: 'none', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))',
-          background: active === t.thread ? 'rgba(59,130,246,0.14)' : 'transparent', color: 'var(--text)',
+          padding: '9px 10px', border: 'none', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
+          background: active === t.thread ? 'rgba(59,130,246,0.14)' : 'transparent', color: 'var(--ui-text-primary, #e7e9ee)',
         } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
             h('span', { style: { fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.peer_name || t.peer),
-            t.unread > 0 && h('span', { style: { marginLeft: 'auto', minWidth: 16, textAlign: 'center', borderRadius: 999, background: 'var(--accent, #3b82f6)', color: '#fff', fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700, padding: '1px 5px' } }, String(t.unread)),
+            t.unread > 0 && h('span', { style: { marginLeft: 'auto', minWidth: 16, textAlign: 'center', borderRadius: 999, background: 'var(--ui-blue, #3b82f6)', color: '#fff', fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700, padding: '1px 5px' } }, String(t.unread)),
           ),
-          h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 } }, t.preview || ''),
+          h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 } }, t.preview || ''),
         )),
       ),
       h(AutoReply, { threads }),
-      me && h('div', { style: { padding: '8px 10px', borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
-        h('div', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'Your address'),
+      me && h('div', { style: { padding: '8px 10px', borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+        h('div', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Your address'),
         h('div', { title: 'Share this with another agent so they can message you',
-          style: { fontFamily: MONO, fontSize: 10, marginTop: 3, overflowWrap: 'anywhere', color: 'var(--text)' } }, me.address),
+          style: { fontFamily: MONO, fontSize: 10, marginTop: 3, overflowWrap: 'anywhere', color: 'var(--ui-text-primary, #e7e9ee)' } }, me.address),
       ),
     ),
     // ── conversation ──
@@ -835,16 +834,16 @@ function Messages() {
       !conv && !showAdd && h('div', { style: { ...secBodyStyle, padding: 16 } },
         me ? 'Pick a conversation, or start one with another agent’s hx_ address.' : 'connecting…'),
       conv && h(React.Fragment, null,
-        h('div', { style: { padding: '8px 12px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+        h('div', { style: { padding: '8px 12px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
           h('div', { style: { fontSize: 13, fontWeight: 700 } }, conv.peer_name || conv.peer),
-          h('div', { style: { fontFamily: MONO, fontSize: 10, color: 'var(--ui-text-tertiary, #6b7280)', overflowWrap: 'anywhere' } }, conv.peer),
+          h('div', { style: { fontFamily: MONO, fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)', overflowWrap: 'anywhere' } }, conv.peer),
         ),
         h('div', { style: { flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
           conv.messages.map((m) => h(Bubble, { key: m.id, m })),
           h('div', { ref: endRef }),
         ),
         err && h('div', { style: { padding: '6px 12px', color: '#f87171', fontSize: 12 } }, err),
-        h('div', { style: { display: 'flex', gap: 6, padding: 10, borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+        h('div', { style: { display: 'flex', gap: 6, padding: 10, borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
           h('input', { value: draft, placeholder: 'Message ' + (conv.peer_name || 'agent') + '…',
             onChange: (e) => setDraft(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } },
@@ -875,22 +874,22 @@ function AutoReply({ threads }) {
   if (!cfg) return null
 
   const peers = Array.from(new Set((threads || []).map((t) => t.peer).filter(Boolean)))
-  return h('div', { style: { borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+  return h('div', { style: { borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
     h('button', { onClick: () => setOpen((o) => !o), style: {
       display: 'flex', alignItems: 'center', gap: 6, width: '100%', cursor: 'pointer',
-      padding: '7px 10px', background: 'transparent', border: 'none', color: 'var(--text)',
+      padding: '7px 10px', background: 'transparent', border: 'none', color: 'var(--ui-text-primary, #e7e9ee)',
     } },
       h('span', { style: {
         width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-        background: cfg.enabled ? '#22c55e' : '#4b5563',
+        background: cfg.enabled ? '#22c55e' : 'var(--ui-text-tertiary, #8b93a7)',
         boxShadow: cfg.enabled ? '0 0 6px #22c55e' : 'none',
       } }),
-      h('span', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #9ca3af)' } },
+      h('span', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)' } },
         'Auto-reply ' + (cfg.enabled ? 'on' : 'off')),
-      h('span', { style: { marginLeft: 'auto', fontSize: 10, color: 'var(--ui-text-tertiary, #6b7280)' } }, open ? '▾' : '▸'),
+      h('span', { style: { marginLeft: 'auto', fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)' } }, open ? '▾' : '▸'),
     ),
     open && h('div', { style: { padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 7 } },
-      h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)', lineHeight: 1.4 } },
+      h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)', lineHeight: 1.4 } },
         'Your agent answers inbound messages on its own, using the local model.'),
       h('label', { style: rowLbl },
         h('input', { type: 'checkbox', checked: !!cfg.enabled, onChange: (e) => save({ enabled: e.target.checked }) }),
@@ -900,7 +899,7 @@ function AutoReply({ threads }) {
         'Reply to any agent'),
       !cfg.allow_all && h('div', null,
         h('div', { style: { ...secTitleStyle, marginTop: 2 } }, 'Allowed senders'),
-        peers.length === 0 && h('div', { style: { fontSize: 11, color: '#6b7280' } }, 'No known peers yet.'),
+        peers.length === 0 && h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'No known peers yet.'),
         peers.map((p) => h('label', { key: p, style: { ...rowLbl, fontFamily: MONO, fontSize: 10 } },
           h('input', { type: 'checkbox', checked: (cfg.allowed || []).includes(p),
             onChange: (e) => save({ allowed: e.target.checked ? [...(cfg.allowed || []), p] : (cfg.allowed || []).filter((x) => x !== p) }) }),
@@ -917,7 +916,7 @@ function AutoReply({ threads }) {
         style: { ...fieldStyle, resize: 'vertical' } }),
       log.length > 0 && h('div', null,
         h('div', { style: secTitleStyle }, 'Recent activity'),
-        h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #6b7280)', maxHeight: 90, overflowY: 'auto', lineHeight: 1.5 } },
+        h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #8b93a7)', maxHeight: 90, overflowY: 'auto', lineHeight: 1.5 } },
           log.slice(-6).reverse().map((ln, i) => h('div', { key: i, style: { overflowWrap: 'anywhere' } }, ln))),
       ),
     ),
@@ -932,9 +931,9 @@ function Bubble({ m }) {
     h('div', { style: {
       maxWidth: '78%', padding: '8px 11px', borderRadius: 12,
       borderBottomRightRadius: out ? 3 : 12, borderBottomLeftRadius: out ? 12 : 3,
-      background: out ? 'var(--accent, #3b82f6)' : 'rgba(128,128,128,0.14)',
-      color: out ? '#fff' : 'var(--text)',
-      border: out ? 'none' : '1px solid var(--ui-stroke-secondary, var(--border))',
+      background: out ? 'var(--ui-blue, #3b82f6)' : 'rgba(128,128,128,0.14)',
+      color: out ? '#fff' : 'var(--ui-text-primary, #e7e9ee)',
+      border: out ? 'none' : '1px solid var(--ui-stroke-secondary, #2a2f3a)',
     } },
       h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, m.body),
       h('div', { title: 'Signature verified on receipt', style: {
@@ -981,23 +980,23 @@ function NewConversation({ onClose, onDone }) {
   }
 
   const peers = (found && found.peers) || []
-  return h('div', { style: { padding: 14, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+  return h('div', { style: { padding: 14, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-      h('span', { style: { fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'New conversation'),
-      h('span', { style: { marginLeft: 'auto', fontSize: 10, color: 'var(--ui-text-tertiary, #6b7280)' } },
+      h('span', { style: { fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'New conversation'),
+      h('span', { style: { marginLeft: 'auto', fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)' } },
         scan ? 'scanning…' : peers.length + ' on this network'),
     ),
     peers.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
       peers.map((p) => h('button', { key: p.address, onClick: () => pick(p), style: {
         display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer',
-        padding: '7px 9px', borderRadius: 8, color: 'var(--text)',
-        border: '1px solid ' + (addr === p.address ? 'var(--accent, #3b82f6)' : 'var(--ui-stroke-secondary, var(--border))'),
+        padding: '7px 9px', borderRadius: 8, color: 'var(--ui-text-primary, #e7e9ee)',
+        border: '1px solid ' + (addr === p.address ? 'var(--ui-blue, #3b82f6)' : 'var(--ui-stroke-secondary, #2a2f3a)'),
         background: addr === p.address ? 'rgba(59,130,246,0.12)' : 'rgba(128,128,128,0.05)',
       } },
         h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: '#22c55e', flexShrink: 0 } }),
         h('span', { style: { minWidth: 0 } },
           h('div', { style: { fontSize: 12, fontWeight: 700 } }, p.name || p.address),
-          h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #6b7280)', overflowWrap: 'anywhere' } }, p.address + ' · ' + (p.url || 'no url')),
+          h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #8b93a7)', overflowWrap: 'anywhere' } }, p.address + ' · ' + (p.url || 'no url')),
         ),
         p.known && h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.45rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#22c55e' } }, 'known'),
       )),
@@ -1022,8 +1021,8 @@ function Engagement() {
   const items = (data && data.items) || []
   const errors = (data && data.errors) || {}
   return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
-    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
-      h('span', { style: { fontSize: 12, color: '#888' } }, 'Mentions, replies and new followers across connected platforms.'),
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+      h('span', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Mentions, replies and new followers across connected platforms.'),
       h('button', { onClick: () => load('limit=40'), disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh'),
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
@@ -1036,6 +1035,30 @@ function Engagement() {
       items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
     )
   )
+}
+
+// Sources and Settings were two tabs configuring the same thing: where content
+// comes from. One tab, two sections — feeds (no login) and accounts (creds).
+function SettingsHub({ status, refresh }) {
+  const [sec, setSec] = React.useState('feeds')
+  return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '10px 12px 0', flexShrink: 0 } },
+      h(Seg, { active: sec === 'feeds', onClick: () => setSec('feeds'), label: 'Feeds' }),
+      h(Seg, { active: sec === 'accounts', onClick: () => setSec('accounts'), label: 'Accounts' }),
+    ),
+    sec === 'feeds' ? h(Sources, {}) : h(Settings, { status, refresh }),
+  )
+}
+
+function Seg({ active, onClick, label }) {
+  return h('button', { onClick, style: {
+    padding: '5px 12px', borderRadius: 7, cursor: 'pointer', flexShrink: 0,
+    fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
+    letterSpacing: '0.14em', textTransform: 'uppercase',
+    color: active ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
+    background: active ? 'var(--ui-bg-elevated, rgba(127,127,127,0.14))' : 'transparent',
+    border: '1px solid ' + (active ? 'var(--ui-stroke-secondary, #2a2f3a)' : 'transparent'),
+  } }, label)
 }
 
 // ── Sources (credential-free feed config) ─────────────────────────────────────
@@ -1068,12 +1091,12 @@ function Sources() {
   }
 
   return h('div', { style: { overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 14 } },
-    h('div', { style: { fontSize: 12, color: '#888' } }, 'These feeds need no login at all — Bluesky, Mastodon, YouTube, RSS, Hacker News and Reddit all read anonymously. Everything here flows into Timeline.'),
+    h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'These feeds need no login at all — Bluesky, Mastodon, YouTube, RSS, Hacker News and Reddit all read anonymously. Everything here flows into Timeline.'),
     h('div', { style: cardStyle },
       h('div', { style: { fontSize: 13, fontWeight: 700, marginBottom: 8 } }, 'Active in Timeline'),
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
         TOGGLEABLE.map((k) => h('button', { key: k, onClick: () => toggle(k),
-          style: { ...platBtn(enabled.includes(k)), borderColor: enabled.includes(k) ? SRC_COLOR[k] : 'var(--border)' } }, SRC_LABEL[k] || k))
+          style: { ...platBtn(enabled.includes(k)), borderColor: enabled.includes(k) ? SRC_COLOR[k] : 'var(--ui-stroke-secondary, #2a2f3a)' } }, SRC_LABEL[k] || k))
       )
     ),
     h('div', { style: cardStyle },
@@ -1082,8 +1105,8 @@ function Sources() {
         values: src[f.k] || [], onChange: (v) => set(f.k, v),
       })),
       h('div', { style: { marginBottom: 10 } },
-        h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 1 } }, 'Mastodon instance'),
-        h('div', { style: { fontSize: 10.5, color: '#6b7280', marginBottom: 4 } }, 'Public timeline. mastodon.social needs auth — fosstodon.org does not.'),
+        h('label', { style: { fontSize: 11, color: 'var(--ui-text-secondary, #b6bccb)', display: 'block', marginBottom: 1 } }, 'Mastodon instance'),
+        h('div', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #8b93a7)', marginBottom: 4 } }, 'Public timeline. mastodon.social needs auth — fosstodon.org does not.'),
         h('input', { placeholder: 'fosstodon.org', value: src.mastodon_instance || '', onChange: (e) => set('mastodon_instance', e.target.value), style: fieldStyle }),
       ),
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
@@ -1104,19 +1127,19 @@ function FeedList({ label, hint, values, onChange, ph }) {
     onChange([...list, v]); setDraft('')
   }
   return h('div', { style: { marginBottom: 14 } },
-    h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 1 } }, label),
-    hint && h('div', { style: { fontSize: 10.5, color: '#6b7280', marginBottom: 4 } }, hint),
+    h('label', { style: { fontSize: 11, color: 'var(--ui-text-secondary, #b6bccb)', display: 'block', marginBottom: 1 } }, label),
+    hint && h('div', { style: { fontSize: 10.5, color: 'var(--ui-text-tertiary, #8b93a7)', marginBottom: 4 } }, hint),
     list.length > 0 && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 5 } },
       list.map((v) => h('span', { key: v, style: {
         display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%',
         padding: '3px 6px 3px 8px', borderRadius: 999, fontSize: 11,
-        border: '1px solid var(--ui-stroke-secondary, var(--border))',
+        border: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
         background: 'rgba(128,128,128,0.10)',
       } },
         h('span', { title: v, style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 } }, v),
         h('button', { title: 'Remove', onClick: () => onChange(list.filter((x) => x !== v)), style: {
           border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
-          color: 'var(--ui-text-tertiary, #9ca3af)', fontSize: 13, lineHeight: 1,
+          color: 'var(--ui-text-tertiary, #8b93a7)', fontSize: 13, lineHeight: 1,
         } }, '×'),
       )),
     ),
@@ -1138,8 +1161,8 @@ const LIST_FIELDS = [
 ]
 
 function ConfigChip({ label }) {
-  return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--border)', fontSize: 12, color: '#888' } },
-    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: '#555', display: 'inline-block' } }),
+  return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--ui-stroke-secondary, #2a2f3a)', fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } },
+    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--ui-stroke-secondary, #2a2f3a)', display: 'inline-block' } }),
     label + ' — add creds in Settings to activate'
   )
 }
@@ -1169,7 +1192,7 @@ function XTimeline({ username }) {
     render()
   }, [username])
   return h('div', { ref, style: { minHeight: 200 } },
-    h('div', { style: { fontSize: 12, color: '#888' } }, 'Loading @' + username + ' timeline…')
+    h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Loading @' + username + ' timeline…')
   )
 }
 
@@ -1177,11 +1200,11 @@ function FeedItem({ it, meta }) {
   const m = it.metrics || {}
   return h('div', { style: feedItemStyle },
     h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 } },
-      h('span', { style: { fontWeight: 600, fontSize: 12, color: '#cbd5e1' } }, meta.dot ? (meta.dot(it) || '@' + (it.author || '?')) : ('@' + (it.author || '?'))),
-      h('span', { style: { fontSize: 10, color: '#666' } }, ago(it.created_at))
+      h('span', { style: { fontWeight: 600, fontSize: 12, color: 'var(--ui-text-secondary, #b6bccb)' } }, meta.dot ? (meta.dot(it) || '@' + (it.author || '?')) : ('@' + (it.author || '?'))),
+      h('span', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)' } }, ago(it.created_at))
     ),
     h('div', { style: { fontSize: 13, lineHeight: 1.4 } }, it[meta.field] || '(no text)'),
-    (m.like_count != null || m.retweet_count != null) && h('div', { style: { marginTop: 6, fontSize: 11, color: '#888', display: 'flex', gap: 12 } },
+    (m.like_count != null || m.retweet_count != null) && h('div', { style: { marginTop: 6, fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)', display: 'flex', gap: 12 } },
       h('span', null, '♥ ' + (m.like_count ?? 0)),
       h('span', null, '⟲ ' + (m.retweet_count ?? 0)),
     ),
@@ -1189,19 +1212,23 @@ function FeedItem({ it, meta }) {
 }
 
 // ── styles ──────────────────────────────────────────────────────────────────────
-const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--text)', fontFamily: 'system-ui, sans-serif' }
-const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))', alignItems: 'center', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' }
-const fieldStyle = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg, #111)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
-const cardStyle = { border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'rgba(128,128,128,0.05)' }
-const secTitleStyle = { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#888', marginBottom: 4 }
-const secBodyStyle = { fontSize: 12, color: '#666' }
-const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--border)', textDecoration: 'none', color: 'var(--text)', background: 'rgba(128,128,128,0.06)' }
-const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, var(--border))', background: 'rgba(128,128,128,0.05)' }
+// Colours come from the Hermes design tokens (--ui-*). Earlier this file used
+// --bg/--text/--border/--accent, which are defined NOWHERE in the app's CSS, so
+// every one silently fell back to a hardcoded literal — that was the black
+// boxes and the invisible banner.
+const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--ui-text-primary, #e7e9ee)', background: 'var(--ui-bg-primary, transparent)', fontFamily: 'var(--dt-font-sans, system-ui, sans-serif)' }
+const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' }
+const fieldStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'var(--ui-bg-elevated, rgba(127,127,127,0.10))', color: 'var(--ui-text-primary, #e7e9ee)', fontSize: 12.5, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
+const cardStyle = { border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, padding: 12, background: 'var(--ui-bg-elevated, rgba(127,127,127,0.06))' }
+const secTitleStyle = { fontFamily: MONO, fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ui-text-tertiary, #8b93a7)', marginBottom: 5 }
+const secBodyStyle = { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' }
+const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', textDecoration: 'none', color: 'var(--ui-text-primary, #e7e9ee)', background: 'var(--ui-bg-elevated, rgba(127,127,127,0.06))' }
+const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'var(--ui-bg-elevated, rgba(127,127,127,0.05))' }
 
 function dotStyle(on) {
   return {
     width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
-    background: on ? '#22c55e' : '#444',
+    background: on ? '#22c55e' : 'var(--ui-stroke-secondary, #2a2f3a)',
     boxShadow: on ? '0 0 6px rgba(34,197,94,0.6)' : 'none',
   }
 }
@@ -1209,21 +1236,21 @@ function badgeStyle(on, fontSize = 11) {
   return {
     padding: '2px 6px', borderRadius: 6, fontWeight: 600, fontSize,
     background: on ? 'rgba(34,197,94,0.18)' : 'rgba(120,120,120,0.15)',
-    color: on ? '#22c55e' : '#888',
+    color: on ? '#22c55e' : 'var(--ui-text-tertiary, #8b93a7)',
   }
 }
 function btnStyle(primary, disabled) {
   return {
     padding: '8px 16px', borderRadius: 8, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-    background: disabled ? '#555' : primary ? 'var(--accent, #3b82f6)' : 'rgba(128,128,128,0.3)', color: '#fff', fontWeight: 600, fontSize: 13,
+    background: disabled ? 'var(--ui-stroke-secondary, #2a2f3a)' : primary ? 'var(--ui-blue, #3b82f6)' : 'rgba(128,128,128,0.3)', color: '#fff', fontWeight: 600, fontSize: 13,
   }
 }
 function platBtn(active, configured, dim) {
   return {
     padding: '5px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600,
-    border: '1px solid var(--border)',
-    background: active ? 'var(--accent, #3b82f6)' : 'transparent',
-    color: active ? '#fff' : (dim ? '#555' : configured ? 'var(--text)' : '#888'),
+    border: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
+    background: active ? 'var(--ui-blue, #3b82f6)' : 'transparent',
+    color: active ? '#fff' : (dim ? 'var(--ui-stroke-secondary, #2a2f3a)' : configured ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)'),
     opacity: dim ? 0.6 : 1,
   }
 }

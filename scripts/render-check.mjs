@@ -16,18 +16,30 @@ plugin.register({ register: (c) => { pane = c; return c } })
 if (!pane) throw new Error('register() did not yield a contribution')
 console.log('contribution:', pane.id, pane.area, JSON.stringify(pane.data))
 
-const tabs = ['Timeline', 'Inbox', 'Feeds', 'Compose', 'Mass Post', 'Sources', 'Settings']
+// Sources folded into Settings, so the top-level tab is gone.
+const tabs = ['Timeline', 'Inbox', 'Feeds', 'Compose', 'Mass Post', 'Settings']
 const html = renderToString(pane.render())
 for (const t of tabs) {
   if (!html.includes(t)) throw new Error('tab missing from render: ' + t)
 }
 console.log('rendered ' + html.length + ' chars; all ' + tabs.length + ' tabs present')
 
+// Every colour must come from a Hermes design token. --bg/--text/--border/
+// --accent are defined nowhere in the app's CSS, so any use of them silently
+// renders as a hardcoded fallback — that was the black-box bug.
+const pluginSrc = await (await import('node:fs/promises')).readFile(new URL('../desktop/plugin.js', import.meta.url), 'utf8')
+const dead = ['var(--text)', 'var(--bg,', 'var(--bg)', 'var(--border)', 'var(--accent']
+for (const t of dead) {
+  const n = pluginSrc.split(t).length - 1
+  if (n) throw new Error(`${n} use(s) of undefined token ${t} — will render as a black box`)
+}
+console.log('no undefined design tokens')
+
 // Force every tab to actually execute: stub useState so the pane's first
 // useState (the tab) returns each tab key in turn. Catches TDZ/hook errors in
-// Timeline / Inbox / Sources that the default view would never hit.
+// Timeline / Inbox / Settings that the default view would never hit.
 const realUseState = React.useState
-for (const key of ['timeline', 'inbox', 'feeds', 'compose', 'mass', 'sources', 'settings']) {
+for (const key of ['timeline', 'inbox', 'feeds', 'compose', 'mass', 'settings']) {
   let first = true
   React.useState = function (init) {
     if (first) { first = false; return realUseState(key) }
