@@ -1081,6 +1081,11 @@ const LIST_FIELDS = [
 // login loop). Posting/scrolling/DMs all work here, exactly like a browser.
 const XSITE_PARTITION = 'persist:hermes-social-x'
 const XSITE_START = 'https://x.com/home'
+// OAuth providers (Apple/Google/Facebook) open their auth page in a popup.
+// The webview's allowpopups is off, so that popup is silently dropped and the
+// login can never finish. We detect those URLs and run the flow in the SAME
+// guest so the session cookie lands in our persistent partition.
+const isAuthPopup = (u) => /accounts\.google\.com|appleid\.apple\.com|facebook\.com|\/oauth\/|authorize|sign[_-]?in|auth\./i.test(u)
 function XBrowser({ initialUrl }) {
   const start = initialUrl || XSITE_START
   const wv = React.useRef(null)
@@ -1108,12 +1113,27 @@ function XBrowser({ initialUrl }) {
     }
     const onNav = (e) => { if (e && e.url) setUrl(e.url) }
     const onCanGo = (e) => { setNav({ canGoBack: !!(e && e.canGoBack), canGoForward: !!(e && e.canGoForward) }) }
+    // Popups (OAuth). Without this, "Continue with Apple/Google" opens a popup
+    // that is dropped, so login silently fails. Auth URLs run in this guest;
+    // other links open in the OS browser.
+    const onNewWindow = (e) => {
+      e.preventDefault()
+      const u = e && e.url
+      if (!u) return
+      if (isAuthPopup(u)) {
+        setLoading(true); setErr(null)
+        if (el && typeof el.loadURL === 'function') el.loadURL(u)
+      } else if (typeof window !== 'undefined' && window.open) {
+        window.open(u, '_blank')
+      }
+    }
     el.addEventListener('did-attach', onDom)
     el.addEventListener('did-finish-load', onLoad)
     el.addEventListener('did-fail-load', onFail)
     el.addEventListener('did-navigate', onNav)
     el.addEventListener('did-navigate-in-page', onNav)
     el.addEventListener('did-change-can-go-back-forward', onCanGo)
+    el.addEventListener('new-window', onNewWindow)
     return () => {
       el.removeEventListener('did-attach', onDom)
       el.removeEventListener('did-finish-load', onLoad)
@@ -1121,6 +1141,7 @@ function XBrowser({ initialUrl }) {
       el.removeEventListener('did-navigate', onNav)
       el.removeEventListener('did-navigate-in-page', onNav)
       el.removeEventListener('did-change-can-go-back-forward', onCanGo)
+      el.removeEventListener('new-window', onNewWindow)
     }
   }, [])
 
