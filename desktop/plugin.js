@@ -68,9 +68,12 @@ const PLATFORMS = [
   { key: 'hn', label: 'Hacker News', fields: [], public: true },
 ]
 
-function ago(iso) {
-  if (!iso) return ''
-  const t = Date.parse(iso)
+function ago(when) {
+  if (!when) return ''
+  // Accepts an ISO string (feeds) or epoch seconds/ms (a2a messages).
+  let t
+  if (typeof when === 'number') t = when < 1e12 ? when * 1000 : when
+  else t = Date.parse(when)
   if (isNaN(t)) return ''
   const s = Math.floor((Date.now() - t) / 1000)
   if (s < 60) return s + 's'
@@ -83,6 +86,7 @@ function ago(iso) {
 // Matches Hermes desktop chrome: --dt-font-mono (JetBrains Mono), uppercase,
 // wide tracking — same treatment the app uses for its own wordmark.
 const MONO = 'var(--dt-font-mono, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace)'
+const JH = { 'Content-Type': 'application/json' }
 
 function Banner({ nConn, total, onRefresh }) {
   return h('div', { style: {
@@ -746,14 +750,166 @@ function StreamItem({ it }) {
   )
 }
 
-// ── Inbox (engagement across platforms) ───────────────────────────────────────
+// ── Inbox: agent-to-agent messaging + platform engagement ────────────────────
 function Inbox({ status }) {
+  const [mode, setMode] = React.useState('messages')
+  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+      h(Tab, { active: mode === 'messages', onClick: () => setMode('messages'), label: 'Messages' }),
+      h(Tab, { active: mode === 'activity', onClick: () => setMode('activity'), label: 'Activity' }),
+    ),
+    mode === 'messages' ? h(Messages, null) : h(Engagement, null),
+  )
+}
+
+// Direct, signed messaging between Hermes agents. No central server: messages
+// are POSTed straight to the peer's /a2a/inbox.
+function Messages() {
+  const [me, setMe] = React.useState(null)
+  const [threads, setThreads] = React.useState([])
+  const [active, setActive] = React.useState(null)
+  const [draft, setDraft] = React.useState('')
+  const [err, setErr] = React.useState('')
+  const [sending, setSending] = React.useState(false)
+  const [showAdd, setShowAdd] = React.useState(false)
+  const endRef = React.useRef(null)
+
+  const refresh = React.useCallback(() => {
+    fetch(API + '/a2a/threads').then((r) => r.json()).then((d) => setThreads(d.threads || [])).catch(() => {})
+  }, [])
+
+  React.useEffect(() => {
+    fetch(API + '/a2a/identity').then((r) => r.json()).then(setMe).catch(() => {})
+    refresh()
+    const t = setInterval(refresh, 10000)  // near-live without a socket
+    return () => clearInterval(t)
+  }, [refresh])
+
+  const conv = threads.find((t) => t.thread === active) || null
+
+  React.useEffect(() => {
+    if (conv && conv.unread) fetch(API + '/a2a/read', { method: 'POST', headers: JH, body: JSON.stringify({ thread: conv.thread }) }).then(refresh)
+    if (endRef.current) endRef.current.scrollIntoView({ block: 'end' })
+  }, [active, conv && conv.messages.length])
+
+  const send = () => {
+    if (!draft.trim() || !conv) return
+    setSending(true); setErr('')
+    fetch(API + '/a2a/send', { method: 'POST', headers: JH, body: JSON.stringify({ to: conv.peer, thread: conv.thread, body: draft.trim() }) })
+      .then((r) => r.json()).then((d) => {
+        if (!d.ok) setErr(d.error || 'send failed')
+        else { setDraft(''); refresh() }
+      }).catch((e) => setErr(String(e))).finally(() => setSending(false))
+  }
+
+  return h('div', { style: { flex: 1, display: 'flex', minHeight: 0 } },
+    // ── conversation list ──
+    h('div', { style: { width: 210, borderRight: '1px solid var(--ui-stroke-secondary, var(--border))', display: 'flex', flexDirection: 'column' } },
+      h('div', { style: { padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+        h('button', { onClick: () => setShowAdd(true), style: { ...platBtn(false), width: '100%' } }, '+ New conversation'),
+      ),
+      h('div', { style: { flex: 1, overflowY: 'auto' } },
+        threads.length === 0 && h('div', { style: { ...secBodyStyle, padding: 10 } }, 'No conversations yet.'),
+        threads.map((t) => h('button', { key: t.thread, onClick: () => setActive(t.thread), style: {
+          display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+          padding: '9px 10px', border: 'none', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))',
+          background: active === t.thread ? 'rgba(59,130,246,0.14)' : 'transparent', color: 'var(--text)',
+        } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+            h('span', { style: { fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.peer_name || t.peer),
+            t.unread > 0 && h('span', { style: { marginLeft: 'auto', minWidth: 16, textAlign: 'center', borderRadius: 999, background: 'var(--accent, #3b82f6)', color: '#fff', fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700, padding: '1px 5px' } }, String(t.unread)),
+          ),
+          h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #9ca3af)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 } }, t.preview || ''),
+        )),
+      ),
+      me && h('div', { style: { padding: '8px 10px', borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+        h('div', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'Your address'),
+        h('div', { title: 'Share this with another agent so they can message you',
+          style: { fontFamily: MONO, fontSize: 10, marginTop: 3, overflowWrap: 'anywhere', color: 'var(--text)' } }, me.address),
+      ),
+    ),
+    // ── conversation ──
+    h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 } },
+      showAdd && h(NewConversation, { onClose: () => setShowAdd(false), onDone: (th) => { setShowAdd(false); refresh(); if (th) setActive(th) } }),
+      !conv && !showAdd && h('div', { style: { ...secBodyStyle, padding: 16 } },
+        me ? 'Pick a conversation, or start one with another agent’s hx_ address.' : 'connecting…'),
+      conv && h(React.Fragment, null,
+        h('div', { style: { padding: '8px 12px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+          h('div', { style: { fontSize: 13, fontWeight: 700 } }, conv.peer_name || conv.peer),
+          h('div', { style: { fontFamily: MONO, fontSize: 10, color: 'var(--ui-text-tertiary, #6b7280)', overflowWrap: 'anywhere' } }, conv.peer),
+        ),
+        h('div', { style: { flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
+          conv.messages.map((m) => h(Bubble, { key: m.id, m })),
+          h('div', { ref: endRef }),
+        ),
+        err && h('div', { style: { padding: '6px 12px', color: '#f87171', fontSize: 12 } }, err),
+        h('div', { style: { display: 'flex', gap: 6, padding: 10, borderTop: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+          h('input', { value: draft, placeholder: 'Message ' + (conv.peer_name || 'agent') + '…',
+            onChange: (e) => setDraft(e.target.value),
+            onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } },
+            style: { ...fieldStyle, flex: 1 } }),
+          h('button', { onClick: send, disabled: sending || !draft.trim(), style: platBtn(true) }, sending ? '…' : 'Send'),
+        ),
+      ),
+    ),
+  )
+}
+
+function Bubble({ m }) {
+  const out = m.dir === 'out'
+  return h('div', { style: { display: 'flex', justifyContent: out ? 'flex-end' : 'flex-start' } },
+    h('div', { style: {
+      maxWidth: '78%', padding: '8px 11px', borderRadius: 12,
+      borderBottomRightRadius: out ? 3 : 12, borderBottomLeftRadius: out ? 12 : 3,
+      background: out ? 'var(--accent, #3b82f6)' : 'rgba(128,128,128,0.14)',
+      color: out ? '#fff' : 'var(--text)',
+      border: out ? 'none' : '1px solid var(--ui-stroke-secondary, var(--border))',
+    } },
+      h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, m.body),
+      h('div', { title: 'Signature verified on receipt', style: {
+        marginTop: 4, fontFamily: MONO, fontSize: '0.45rem', letterSpacing: '0.1em',
+        textTransform: 'uppercase', opacity: 0.7,
+      } }, (out ? '' : '✓ signed · ') + ago(m.ts)),
+    )
+  )
+}
+
+function NewConversation({ onClose, onDone }) {
+  const [addr, setAddr] = React.useState('')
+  const [url, setUrl] = React.useState('')
+  const [body, setBody] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [err, setErr] = React.useState('')
+  const go = () => {
+    if (!addr.trim() || !body.trim()) return
+    setBusy(true); setErr('')
+    fetch(API + '/a2a/send', { method: 'POST', headers: JH, body: JSON.stringify({ to: addr.trim(), url: url.trim(), body: body.trim() }) })
+      .then((r) => r.json()).then((d) => {
+        if (!d.ok) setErr(d.error || 'send failed')
+        else onDone(d.thread)
+      }).catch((e) => setErr(String(e))).finally(() => setBusy(false))
+  }
+  return h('div', { style: { padding: 14, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+    h('div', { style: { fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'New conversation'),
+    h('input', { value: addr, onChange: (e) => setAddr(e.target.value), placeholder: 'Agent address (hx_…)', style: fieldStyle }),
+    h('input', { value: url, onChange: (e) => setUrl(e.target.value), placeholder: 'Their URL (http://host:8731) — needed for first contact', style: fieldStyle }),
+    h('textarea', { value: body, onChange: (e) => setBody(e.target.value), placeholder: 'First message…', rows: 3, style: { ...fieldStyle, resize: 'vertical' } }),
+    err && h('div', { style: { color: '#f87171', fontSize: 12 } }, err),
+    h('div', { style: { display: 'flex', gap: 6 } },
+      h('button', { onClick: go, disabled: busy || !addr.trim() || !body.trim(), style: platBtn(true) }, busy ? 'Sending…' : 'Send'),
+      h('button', { onClick: onClose, style: platBtn(false) }, 'Cancel'),
+    ),
+  )
+}
+
+// Platform engagement (mentions, replies, followers) — the original inbox.
+function Engagement() {
   const { data, loading, err, load } = useStream('/inbox')
   React.useEffect(() => { load('limit=40') }, [])
   const items = (data && data.items) || []
   const errors = (data && data.errors) || {}
-  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--border)' } },
+  return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
       h('span', { style: { fontSize: 12, color: '#888' } }, 'Mentions, replies and new followers across connected platforms.'),
       h('button', { onClick: () => load('limit=40'), disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh'),
     ),
@@ -763,7 +919,7 @@ function Inbox({ status }) {
       Object.entries(errors).map(([k, v]) => (SRC_LABEL[k] || k) + ': ' + v).join('  ·  ')),
     h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
       loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
-      !loading && items.length === 0 && !((data || {}).hint) && h('div', { style: secBodyStyle }, 'inbox is empty'),
+      !loading && items.length === 0 && !((data || {}).hint) && h('div', { style: secBodyStyle }, 'nothing yet'),
       items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
     )
   )
@@ -912,7 +1068,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement }
 
 export default {
   id: ID,
