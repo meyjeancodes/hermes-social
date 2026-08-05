@@ -486,48 +486,122 @@ function Timeline({ status }) {
   const [q, setQ] = React.useState('')
   const [only, setOnly] = React.useState({})
   const [auto, setAuto] = React.useState(false)
+  // Pending items are held back so a background refresh never yanks the
+  // scroll position out from under you — you opt in via the "N new" pill.
+  const [pending, setPending] = React.useState([])
+  const [seenIds, setSeenIds] = React.useState(() => new Set())
+  const [per, setPer] = React.useState(15)
+  const scroller = React.useRef(null)
+  const perRef = React.useRef(15)
 
-  const qs = React.useCallback(() => {
+  const qsFor = React.useCallback((n) => {
     const sel = Object.keys(only).filter((k) => only[k])
-    const p = ['per=15', 'limit=80']
+    const p = ['per=' + n, 'limit=' + n * 6]
     if (q.trim()) p.push('q=' + encodeURIComponent(q.trim()))
     if (sel.length) p.push('sources=' + sel.join(','))
     return p.join('&')
   }, [q, only])
 
+  const qs = React.useCallback(() => qsFor(per), [qsFor, per])
+
   React.useEffect(() => { load(qs()) }, [])
+
+  // Source filter toggles refetch from the first window.
+  const firstRun = React.useRef(true)
+  React.useEffect(() => {
+    if (firstRun.current) { firstRun.current = false; return }
+    reload()
+  }, [only])
+
+  // Track what's on screen so a poll can tell genuinely-new items apart.
+  const items = (data && data.items) || []
+  React.useEffect(() => {
+    if (!items.length) return
+    setSeenIds(new Set(items.map((i) => i.source + i.id)))
+    setPending([])
+  }, [data])
+
+  // Background poll: fetch, diff, stash. Never swaps the visible list.
   React.useEffect(() => {
     if (!auto) return
-    const t = setInterval(() => load(qs()), 60000)
+    const tick = () => {
+      fetch(API + '/timeline?' + qs()).then((r) => r.json()).then((d) => {
+        const fresh = (d.items || []).filter((i) => !seenIds.has(i.source + i.id))
+        if (fresh.length) setPending(fresh)
+      }).catch(() => {})
+    }
+    const t = setInterval(tick, 60000)
     return () => clearInterval(t)
-  }, [auto, qs, load])
+  }, [auto, qs, seenIds])
 
-  const items = (data && data.items) || []
+  const showPending = () => {
+    load(qs())
+    setPending([])
+    if (scroller.current) scroller.current.scrollTop = 0
+  }
+
+  // Infinite scroll: near the bottom, widen the per-source window and refetch.
+  // The backend pages by per/limit, so growing the window is the honest way to
+  // reach further back without inventing a cursor the API doesn't have.
+  const maxedOut = data && data.count != null && items.length > 0 && data.count < per * 6
+  const onScroll = (e) => {
+    const el = e.currentTarget
+    if (loading || maxedOut || per >= 60) return
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > 400) return
+    const next = Math.min(per + 15, 60)
+    if (next === perRef.current) return
+    perRef.current = next
+    setPer(next)
+    load(qsFor(next))
+  }
+
+  // Any change of query or filters restarts paging from the first window.
+  const reload = React.useCallback(() => {
+    perRef.current = 15
+    setPer(15)
+    setPending([])
+    load(qsFor(15))
+    if (scroller.current) scroller.current.scrollTop = 0
+  }, [qsFor, load])
+
   const avail = (data && data.sources) || Object.keys(SRC_LABEL)
   const errors = (data && data.errors) || {}
   const toggle = (k) => setOnly((o) => ({ ...o, [k]: !o[k] }))
 
-  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--border)' } },
+  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
       h('input', { placeholder: 'Search the whole timeline…', value: q,
         onChange: (e) => setQ(e.target.value),
-        onKeyDown: (e) => { if (e.key === 'Enter') load(qs()) },
+        onKeyDown: (e) => { if (e.key === 'Enter') reload() },
         style: { ...fieldStyle, flex: 1 } }),
-      h('button', { onClick: () => load(qs()), disabled: loading, style: platBtn(false) }, loading ? '↻…' : '↻'),
-      h('button', { onClick: () => setAuto((a) => !a), title: 'auto-refresh every 60s', style: platBtn(auto) }, auto ? '⏱ on' : '⏱ off'),
+      h('button', { onClick: reload, disabled: loading, style: platBtn(false) }, loading ? '↻…' : '↻'),
+      h('button', { onClick: () => setAuto((a) => !a), title: 'check for new posts every 60s', style: platBtn(auto) }, auto ? '⏱ on' : '⏱ off'),
     ),
-    h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' } },
-      avail.map((k) => h('button', { key: k, onClick: () => { toggle(k); setTimeout(() => load(qs()), 0) },
+    h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
+      avail.map((k) => h('button', { key: k, onClick: () => toggle(k),
         style: { ...platBtn(!!only[k]), borderColor: only[k] ? SRC_COLOR[k] : 'var(--border)' } }, SRC_LABEL[k] || k)),
-      Object.keys(only).some((k) => only[k]) && h('button', { onClick: () => { setOnly({}); setTimeout(() => load('per=15&limit=80'), 0) }, style: { ...platBtn(false), marginLeft: 'auto' } }, 'clear'),
+      Object.keys(only).some((k) => only[k]) && h('button', { onClick: () => setOnly({}), style: { ...platBtn(false), marginLeft: 'auto' } }, 'clear'),
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#f59e0b' } },
       Object.entries(errors).map(([k, v]) => (SRC_LABEL[k] || k) + ': ' + v).join('  ·  ')),
-    h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
+    pending.length > 0 && h('button', { onClick: showPending, style: {
+      position: 'absolute', top: 96, left: '50%', transform: 'translateX(-50%)', zIndex: 5,
+      padding: '6px 14px', borderRadius: 999, cursor: 'pointer',
+      background: 'var(--accent, #3b82f6)', color: '#fff', border: 'none',
+      fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
+      letterSpacing: '0.14em', textTransform: 'uppercase',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
+    } }, '↑ ' + pending.length + ' new post' + (pending.length === 1 ? '' : 's')),
+    h('div', { ref: scroller, onScroll, style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
       loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
       !loading && items.length === 0 && h('div', { style: secBodyStyle }, q ? 'no matches' : 'nothing yet'),
       items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
+      items.length > 0 && h('div', { style: {
+        padding: '10px 0 4px', textAlign: 'center', fontFamily: MONO,
+        fontSize: '0.5rem', letterSpacing: '0.16em', textTransform: 'uppercase',
+        color: 'var(--ui-text-tertiary, #6b7280)',
+      } }, loading ? 'loading more…' : (maxedOut || per >= 60) ? '· end of feed ·' : 'scroll for more'),
     )
   )
 }
