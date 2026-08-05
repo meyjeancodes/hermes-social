@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from . import config, drafts, platforms, sources
+from . import a2a, config, drafts, platforms, sources
 
 HOST = "127.0.0.1"
 PORT = 8731
@@ -46,6 +46,28 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     if method == "GET" and path == "/inbox":
         config.reload()
         return _inbox(int(params.get("limit", ["30"])[0]))
+
+    # ── agent-to-agent messaging ─────────────────────────────────────────────
+    # /a2a/inbox is the one route meant to be reachable by other agents.
+    if method == "POST" and path == "/a2a/inbox":
+        return a2a.receive(body)
+    if method == "GET" and path == "/a2a/identity":
+        return {"ok": True, **a2a.identity(), "url": a2a.public_url()}
+    if method == "GET" and path == "/a2a/threads":
+        return a2a.threads()
+    if method == "GET" and path == "/a2a/peers":
+        return a2a.list_peers()
+    if method == "POST" and path == "/a2a/send":
+        return a2a.send(body.get("to", ""), body.get("body", ""),
+                        body.get("thread", ""), body.get("url", ""))
+    if method == "POST" and path == "/a2a/peers":
+        return a2a.add_peer(body.get("address", ""), body.get("url", ""), body.get("name", ""))
+    if method == "POST" and path == "/a2a/peers/remove":
+        return a2a.remove_peer(body.get("address", ""))
+    if method == "POST" and path == "/a2a/read":
+        return a2a.mark_read(body.get("thread", ""))
+    if method == "POST" and path == "/a2a/identity":
+        return a2a.set_identity(body.get("name", ""), body.get("bio", ""))
     if method == "GET" and path == "/drafts":
         return drafts.list_drafts(params.get("status", [""])[0])
     if method == "POST" and seg and seg[0] == "drafts":
