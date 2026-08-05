@@ -68,6 +68,12 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
         return a2a.mark_read(body.get("thread", ""))
     if method == "POST" and path == "/a2a/identity":
         return a2a.set_identity(body.get("name", ""), body.get("bio", ""))
+    if method == "GET" and path == "/a2a/autoreply":
+        from . import autoreply
+        return autoreply.status()
+    if method == "POST" and path == "/a2a/autoreply":
+        from . import autoreply
+        return autoreply.set_config(body)
     if method == "GET" and path == "/drafts":
         return drafts.list_drafts(params.get("status", [""])[0])
     if method == "POST" and seg and seg[0] == "drafts":

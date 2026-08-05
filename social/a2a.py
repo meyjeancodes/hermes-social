@@ -320,4 +320,12 @@ def receive(msg: Dict[str, Any]) -> Dict[str, Any]:
     known = {p["address"] for p in _read(PEERS_PATH, [])}
     if msg["from"] not in known and msg.get("reply_to"):
         add_peer(msg["from"], msg["reply_to"], msg.get("from_name", ""))
-    return record(msg, "in")
+    stored = record(msg, "in")
+    # Hand off to the local agent, unless this was a replay we already had.
+    if stored.get("ok") and not stored.get("duplicate"):
+        try:
+            from . import autoreply
+            stored.update(autoreply.maybe_reply(msg))
+        except Exception as e:  # auto-reply must never break delivery
+            stored["auto_reply_error"] = str(e)
+    return stored
