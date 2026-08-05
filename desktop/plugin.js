@@ -951,23 +951,65 @@ function NewConversation({ onClose, onDone }) {
   const [body, setBody] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [err, setErr] = React.useState('')
+  const [found, setFound] = React.useState(null)
+  const [scan, setScan] = React.useState(false)
+
+  // Agents on the same network announce themselves, so the common case is
+  // picking one from a list rather than typing an address and a URL.
+  const look = React.useCallback(() => {
+    setScan(true)
+    fetch(API + '/a2a/discover').then((r) => r.json())
+      .then((d) => setFound(d)).catch(() => setFound({ peers: [] }))
+      .finally(() => setScan(false))
+  }, [])
+  React.useEffect(() => { look(); const t = setInterval(look, 5000); return () => clearInterval(t) }, [look])
+
+  const pick = (p) => { setAddr(p.address); setUrl(p.url); setErr('') }
+
   const go = () => {
     if (!addr.trim() || !body.trim()) return
     setBusy(true); setErr('')
-    fetch(API + '/a2a/send', { method: 'POST', headers: JH, body: JSON.stringify({ to: addr.trim(), url: url.trim(), body: body.trim() }) })
-      .then((r) => r.json()).then((d) => {
-        if (!d.ok) setErr(d.error || 'send failed')
-        else onDone(d.thread)
-      }).catch((e) => setErr(String(e))).finally(() => setBusy(false))
+    // Verify the peer before sending, so a bad address fails with a clear
+    // reason instead of a vague delivery error.
+    fetch(API + '/a2a/connect', { method: 'POST', headers: JH, body: JSON.stringify({ address: addr.trim(), url: url.trim() }) })
+      .then((r) => r.json()).then((c) => {
+        if (!c.ok) throw new Error(c.error || 'could not connect')
+        return fetch(API + '/a2a/send', { method: 'POST', headers: JH, body: JSON.stringify({ to: addr.trim(), url: url.trim(), body: body.trim() }) }).then((r) => r.json())
+      })
+      .then((d) => { if (!d.ok) throw new Error(d.error || 'send failed'); onDone(d.thread) })
+      .catch((e) => setErr(String(e.message || e))).finally(() => setBusy(false))
   }
+
+  const peers = (found && found.peers) || []
   return h('div', { style: { padding: 14, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))' } },
-    h('div', { style: { fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'New conversation'),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+      h('span', { style: { fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)' } }, 'New conversation'),
+      h('span', { style: { marginLeft: 'auto', fontSize: 10, color: 'var(--ui-text-tertiary, #6b7280)' } },
+        scan ? 'scanning…' : peers.length + ' on this network'),
+    ),
+    peers.length > 0 && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+      peers.map((p) => h('button', { key: p.address, onClick: () => pick(p), style: {
+        display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer',
+        padding: '7px 9px', borderRadius: 8, color: 'var(--text)',
+        border: '1px solid ' + (addr === p.address ? 'var(--accent, #3b82f6)' : 'var(--ui-stroke-secondary, var(--border))'),
+        background: addr === p.address ? 'rgba(59,130,246,0.12)' : 'rgba(128,128,128,0.05)',
+      } },
+        h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: '#22c55e', flexShrink: 0 } }),
+        h('span', { style: { minWidth: 0 } },
+          h('div', { style: { fontSize: 12, fontWeight: 700 } }, p.name || p.address),
+          h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #6b7280)', overflowWrap: 'anywhere' } }, p.address + ' · ' + (p.url || 'no url')),
+        ),
+        p.known && h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.45rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#22c55e' } }, 'known'),
+      )),
+    ),
+    found && !found.running && h('div', { style: { fontSize: 10.5, color: '#f59e0b' } },
+      'Network discovery is off' + (found.error ? ': ' + found.error : '') + '. You can still connect manually below.'),
     h('input', { value: addr, onChange: (e) => setAddr(e.target.value), placeholder: 'Agent address (hx_…)', style: fieldStyle }),
-    h('input', { value: url, onChange: (e) => setUrl(e.target.value), placeholder: 'Their URL (http://host:8731) — needed for first contact', style: fieldStyle }),
+    h('input', { value: url, onChange: (e) => setUrl(e.target.value), placeholder: 'Their URL (http://host:8731)', style: fieldStyle }),
     h('textarea', { value: body, onChange: (e) => setBody(e.target.value), placeholder: 'First message…', rows: 3, style: { ...fieldStyle, resize: 'vertical' } }),
     err && h('div', { style: { color: '#f87171', fontSize: 12 } }, err),
     h('div', { style: { display: 'flex', gap: 6 } },
-      h('button', { onClick: go, disabled: busy || !addr.trim() || !body.trim(), style: platBtn(true) }, busy ? 'Sending…' : 'Send'),
+      h('button', { onClick: go, disabled: busy || !addr.trim() || !body.trim(), style: platBtn(true) }, busy ? 'Connecting…' : 'Connect & send'),
       h('button', { onClick: onClose, style: platBtn(false) }, 'Cancel'),
     ),
   )
@@ -1035,10 +1077,15 @@ function Sources() {
       )
     ),
     h('div', { style: cardStyle },
-      SRC_FIELDS.map((f) => h('div', { key: f.k, style: { marginBottom: 10 } },
-        h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 3 } }, f.label),
-        h('input', { placeholder: f.ph, value: src[f.k] || '', onChange: (e) => set(f.k, e.target.value), style: fieldStyle })
-      )),
+      LIST_FIELDS.map((f) => h(FeedList, {
+        key: f.k, label: f.label, hint: f.hint, ph: f.ph,
+        values: src[f.k] || [], onChange: (v) => set(f.k, v),
+      })),
+      h('div', { style: { marginBottom: 10 } },
+        h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 1 } }, 'Mastodon instance'),
+        h('div', { style: { fontSize: 10.5, color: '#6b7280', marginBottom: 4 } }, 'Public timeline. mastodon.social needs auth — fosstodon.org does not.'),
+        h('input', { placeholder: 'fosstodon.org', value: src.mastodon_instance || '', onChange: (e) => set('mastodon_instance', e.target.value), style: fieldStyle }),
+      ),
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
         h('button', { onClick: save, disabled: busy, style: btnStyle(true, busy) }, busy ? 'Saving…' : 'Save sources'),
         saved && h('span', { style: { fontSize: 11, color: '#22c55e' } }, 'saved — Timeline will use these on next refresh'),
@@ -1046,6 +1093,49 @@ function Sources() {
     )
   )
 }
+
+// A list-valued source field: add/remove several feeds of the same kind.
+function FeedList({ label, hint, values, onChange, ph }) {
+  const [draft, setDraft] = React.useState('')
+  const list = values || []
+  const add = () => {
+    const v = draft.trim()
+    if (!v || list.includes(v)) { setDraft(''); return }
+    onChange([...list, v]); setDraft('')
+  }
+  return h('div', { style: { marginBottom: 14 } },
+    h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 1 } }, label),
+    hint && h('div', { style: { fontSize: 10.5, color: '#6b7280', marginBottom: 4 } }, hint),
+    list.length > 0 && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 5 } },
+      list.map((v) => h('span', { key: v, style: {
+        display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%',
+        padding: '3px 6px 3px 8px', borderRadius: 999, fontSize: 11,
+        border: '1px solid var(--ui-stroke-secondary, var(--border))',
+        background: 'rgba(128,128,128,0.10)',
+      } },
+        h('span', { title: v, style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 } }, v),
+        h('button', { title: 'Remove', onClick: () => onChange(list.filter((x) => x !== v)), style: {
+          border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
+          color: 'var(--ui-text-tertiary, #9ca3af)', fontSize: 13, lineHeight: 1,
+        } }, '×'),
+      )),
+    ),
+    h('div', { style: { display: 'flex', gap: 5 } },
+      h('input', { placeholder: ph, value: draft,
+        onChange: (e) => setDraft(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); add() } },
+        style: { ...fieldStyle, flex: 1 } }),
+      h('button', { onClick: add, disabled: !draft.trim(), style: platBtn(false) }, '+ Add'),
+    ),
+  )
+}
+
+const LIST_FIELDS = [
+  { k: 'rss_urls', label: 'RSS / Atom feeds', ph: 'https://example.com/feed', hint: 'Any blog or news feed. Several supported.' },
+  { k: 'subreddits', label: 'Subreddits', ph: 'robotics', hint: 'Fetched one at a time — Reddit blocks parallel reads.' },
+  { k: 'bluesky_handles', label: 'Bluesky handles', ph: 'someone.bsky.social', hint: 'Public posts, no login.' },
+  { k: 'youtube_channels', label: 'YouTube channels', ph: 'UCxxxxxxxxxxxxxxxxxxxxxx', hint: 'Channel ID (starts with UC), from the channel’s About page.' },
+]
 
 function ConfigChip({ label }) {
   return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--border)', fontSize: 12, color: '#888' } },
@@ -1139,7 +1229,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList }
 
 export default {
   id: ID,
