@@ -136,6 +136,7 @@ function SocialPane() {
       h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
+      h(Tab, { active: tab === 'xsite', onClick: () => setTab('xsite'), label: 'X Site' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
       h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' } },
         PLATFORMS.map((p) =>
@@ -150,6 +151,7 @@ function SocialPane() {
       : tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
+      : tab === 'xsite' ? h(XBrowser, { initialUrl: 'https://x.com/home' })
       : h(SettingsHub, { status, refresh: loadStatus })
   )
 }
@@ -1157,6 +1159,112 @@ function ConfigChip({ label }) {
   return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--ui-stroke-secondary, #2a2f3a)', fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } },
     h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--ui-stroke-secondary, #2a2f3a)', display: 'inline-block' } }),
     label + ' — add creds in Settings to activate'
+  )
+}
+
+// ── X Site (full interactive X in a webview) ──────────────────────────────────
+// A normal <iframe> to x.com is BLOCKED by X-Frame-Options: DENY, so the
+// read-only embed widget (XTimeline) is the most an iframe can show. To get the
+// FULL interactive site — the thing Marco (@mfranz_on) embedded — we use an
+// Electron <webview> guest. The Hermes chat window sets webviewTag: true
+// (electron/session-windows.cjs) with no CSP webview-src restriction, so a
+// webview is a real top-level navigation that ignores X-Frame-Options. We give
+// it a persistent partition so your X login survives reloads (no infinite
+// login loop). Posting/scrolling/DMs all work here, exactly like a browser.
+const XSITE_PARTITION = 'persist:hermes-social-x'
+const XSITE_START = 'https://x.com/home'
+function XBrowser({ initialUrl }) {
+  const start = initialUrl || XSITE_START
+  const wv = React.useRef(null)
+  const [url, setUrl] = React.useState(start)
+  const [nav, setNav] = React.useState({ canGoBack: false, canGoForward: false })
+  const [loading, setLoading] = React.useState(true)
+  const [domReady, setDomReady] = React.useState(false)
+  const [err, setErr] = React.useState(null)
+
+  // webviews are created by the Electron webview-tag machinery, not React's
+  // reconciler, so we wire their events imperatively once the node exists.
+  React.useEffect(() => {
+    const el = wv.current
+    if (!el) return
+    const onDom = () => { setDomReady(true); setLoading(true) }
+    const onLoad = () => { setLoading(false) }
+    const onFail = (e) => {
+      setLoading(false)
+      const code = e && (e.errorCode || (e.details && e.details.errorCode))
+      const desc = e && (e.errorDescription || (e.details && e.details.errorDescription) || '')
+      // ERR_ABORTED (-3) fires on normal in-page navigation; ignore it.
+      if (code === -3) return
+      setErr('x.com failed to load: ' + (desc || ('code ' + code)) +
+        '. If you are offline or behind a corporate proxy, the webview cannot reach X.')
+    }
+    const onNav = (e) => { if (e && e.url) setUrl(e.url) }
+    const onCanGo = (e) => { setNav({ canGoBack: !!(e && e.canGoBack), canGoForward: !!(e && e.canGoForward) }) }
+    el.addEventListener('did-attach', onDom)
+    el.addEventListener('did-finish-load', onLoad)
+    el.addEventListener('did-fail-load', onFail)
+    el.addEventListener('did-navigate', onNav)
+    el.addEventListener('did-navigate-in-page', onNav)
+    el.addEventListener('did-change-can-go-back-forward', onCanGo)
+    return () => {
+      el.removeEventListener('did-attach', onDom)
+      el.removeEventListener('did-finish-load', onLoad)
+      el.removeEventListener('did-fail-load', onFail)
+      el.removeEventListener('did-navigate', onNav)
+      el.removeEventListener('did-navigate-in-page', onNav)
+      el.removeEventListener('did-change-can-go-back-forward', onCanGo)
+    }
+  }, [])
+
+  const go = (target) => {
+    const el = wv.current
+    let u = (target || url || '').trim()
+    if (!u) return
+    if (!/^https?:\/\//i.test(u)) u = 'https://' + u
+    setUrl(u); setLoading(true); setErr(null)
+    if (el && typeof el.loadURL === 'function') el.loadURL(u)
+  }
+  const reload = () => { const el = wv.current; if (el && typeof el.reload === 'function') { setLoading(true); el.reload() } }
+  const back = () => { const el = wv.current; if (el && nav.canGoBack && typeof el.goBack === 'function') el.goBack() }
+  const fwd = () => { const el = wv.current; if (el && nav.canGoForward && typeof el.goForward === 'function') el.goForward() }
+
+  const btn = (label, onClick, disabled, primary) => h('button', {
+    onClick, disabled: !!disabled, title: label,
+    style: {
+      background: primary ? 'var(--ui-blue, #3b82f6)' : 'rgba(127,127,127,0.10)',
+      color: primary ? '#fff' : 'var(--ui-text-secondary, #b6bccb)',
+      border: '1px solid ' + (primary ? 'transparent' : 'var(--ui-stroke-secondary, #2a2f3a)'),
+      borderRadius: 6, padding: '4px 8px', cursor: disabled ? 'default' : 'pointer',
+      fontFamily: MONO, fontSize: '0.58rem', fontWeight: 600, letterSpacing: '0.12em',
+      textTransform: 'uppercase', lineHeight: 1, opacity: disabled ? 0.4 : 1,
+    },
+  }, label)
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexShrink: 0 } },
+      btn('‹', back, !nav.canGoBack),
+      btn('›', fwd, !nav.canGoForward),
+      h('input', {
+        value: url, onChange: (e) => setUrl(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') go() },
+        placeholder: 'https://x.com/...',
+        style: { ...fieldStyle, flex: 1, minWidth: 80 },
+      }),
+      btn('Go', () => go(), false, true),
+      btn('↻', reload, false),
+    ),
+    err && h('div', { style: { padding: '8px 12px', fontSize: 12, color: '#f87171', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } }, err),
+    loading && h('div', { style: { fontSize: 11, fontFamily: MONO, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)', padding: '4px 12px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } }, 'loading x.com…'),
+    h('webview', {
+      ref: wv,
+      src: start,
+      partition: XSITE_PARTITION,
+      // Sandbox is already true at the window level; allow-scripts keeps the
+      // SPA alive, allow-popups lets "open in new tab" escape to the OS browser.
+      style: { flex: 1, width: '100%', minHeight: 0, border: 'none', background: '#000' },
+      // attrs that Electron reads off the element:
+    }),
+    h('div', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)', padding: '4px 10px', borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)', fontFamily: MONO, letterSpacing: '0.08em' } },
+      'Full X inside Hermes — log in once, stays logged in. Not an API feed.'),
   )
 }
 
