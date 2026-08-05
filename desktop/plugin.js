@@ -18,21 +18,6 @@ const API = 'http://127.0.0.1:8731'
 function xIntent(text) {
   return 'https://x.com/intent/tweet?text=' + encodeURIComponent(text || '')
 }
-function xFreeTier(err) {
-  if (!err) return false
-  return /402|credits depleted|403|not authorized|Forbidden/i.test(err)
-}
-function XFreeTierFallback({ onCompose }) {
-  const link = (label, href) => h('a', { href, target: '_blank', rel: 'noreferrer', style: { ...platBtn(false), textDecoration: 'none', display: 'inline-block' } }, label)
-  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-    h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ X Free tier blocks timeline reads + posting via API. Open X to view & post:'),
-    h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
-      link('Open Home ↗', 'https://x.com/home'),
-      link('Notifications ↗', 'https://x.com/notifications'),
-      h('a', { href: xIntent(''), target: '_blank', rel: 'noreferrer', style: { ...platBtn(true), textDecoration: 'none', display: 'inline-block' } }, 'Compose ↗'),
-    )
-  )
-}
 
 const PLATFORMS = [
   { key: 'x', label: 'X', fields: [
@@ -132,7 +117,6 @@ function SocialPane() {
     h('div', { style: tabBarStyle },
       h(Tab, { active: tab === 'timeline', onClick: () => setTab('timeline'), label: 'Timeline' }),
       h(Tab, { active: tab === 'inbox', onClick: () => setTab('inbox'), label: 'Inbox' }),
-      h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
@@ -146,7 +130,6 @@ function SocialPane() {
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     tab === 'timeline' ? h(Timeline, { status })
       : tab === 'inbox' ? h(Inbox, { status })
-      : tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
       : h(SettingsHub, { status, refresh: loadStatus })
@@ -393,86 +376,6 @@ function MassPost({ status, refresh }) {
   )
 }
 
-// ── Feeds ──────────────────────────────────────────────────────────────────────
-function Feeds({ status, refresh }) {
-  const [plat, setPlat] = React.useState('all')
-  const [xView, setXView] = React.useState('live') // 'live' = full X webview, 'feed' = API posts
-  const [items, setItems] = React.useState({})
-  const [loading, setLoading] = React.useState(false)
-  const [err, setErr] = React.useState(null)
-  const configured = (status && status.configured) || {}
-  const load = () => {
-    if (plat !== 'x' && plat !== 'all') { // X has no API feed here (use the Live webview)
-      setLoading(true); setErr(null)
-      const q = 'platform=' + plat + '&limit=12'
-      fetch(API + '/feeds?' + q).then((r) => r.json()).then((d) => setItems(d)).catch((e) => setErr(String(e))).finally(() => setLoading(false))
-    } else {
-      setItems({})
-    }
-  }
-  React.useEffect(() => { load() }, [plat])
-  const pmeta = {
-    x: { name: 'X', field: 'text', sub: (i) => '@' + (i.author || '?'), dot: (i) => i.author_name },
-    reddit: { name: 'Reddit', field: 'title', sub: (i) => 'r/' + (i.subreddit || '?') + ' · ' + (i.score || 0) + '↑' },
-    facebook: { name: 'Facebook', field: 'text', sub: () => '' },
-    instagram: { name: 'Instagram', field: 'text', sub: () => '' },
-    tiktok: { name: 'TikTok', field: 'text', sub: (i) => i.url ? 'video' : '' },
-    twitch: { name: 'Twitch', field: 'text', sub: () => '' },
-    hn: { name: 'Hacker News', field: 'title', sub: (i) => '▲ ' + (i.score ?? 0) + ' · ' + (i.num_comments ?? 0) + ' comments' },
-  }
-  const keys = plat === 'all' ? ['x', 'reddit', 'facebook', 'instagram', 'tiktok', 'twitch', 'hn'] : [plat]
-  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', flexWrap: 'wrap' } },
-      h('button', { onClick: () => setPlat('all'), style: platBtn(plat === 'all') }, 'All'),
-      ...PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlat(p.key), style: platBtn(plat === p.key, configured[p.key]) }, p.label)),
-    ),
-    err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    (plat === 'all' || plat === 'x') && h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
-      h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
-        h('span', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'X:'),
-        h('button', { onClick: () => setXView('live'), style: platBtn(xView === 'live') }, 'Live site'),
-        h('button', { onClick: () => setXView('feed'), style: platBtn(xView === 'feed', configured.x) }, 'Feed*'),
-        xView === 'feed' && h('button', { onClick: load, disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh'),
-      ),
-      xView === 'feed'
-        ? h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
-            (() => {
-              const sec = items.x; const list = (sec && sec.items) || []
-              return [
-                !configured.x && h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '* API reads need a paid X tier — the Live site tab works without one.'),
-                !sec && h('div', { style: secBodyStyle }, 'loading…'),
-                sec && !sec.ok && (xFreeTier(sec.error) ? h(XFreeTierFallback, { onCompose: () => {} })
-                  : h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ ' + (sec.error || 'not available'))),
-                sec && sec.ok && list.length === 0 && h('div', { style: secBodyStyle }, 'nothing yet'),
-                list.map((it) => h(FeedItem, { key: it.id, it, meta: pmeta.x })),
-              ]
-            })()
-          )
-        : h('div', { style: { flex: 1, minHeight: 0 } },
-            h(XBrowser, { initialUrl: 'https://x.com/home' })
-          )
-    ),
-    h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 12 } },
-      keys.filter((k) => k !== 'x' || (plat !== 'all' && plat !== 'x')).map((k) => {
-        const meta = pmeta[k]; const sec = items[k]; const list = (sec && sec.items) || []
-        // unconfigured, no real error -> compact chip (declutter)
-        if (!configured[k] && !(sec && !sec.ok && !xFreeTier(sec.error))) {
-          return h(ConfigChip, { key: k, label: meta.name })
-        }
-        return h('div', { key: k },
-          h('div', { style: secTitleStyle }, meta.name),
-          !sec && h('div', { style: secBodyStyle }, 'loading…'),
-          sec && !sec.ok && (k === 'x' && xFreeTier(sec.error)
-            ? h(XFreeTierFallback, { onCompose: () => {} })
-            : h('div', { style: { fontSize: 12, color: '#f59e0b' } }, '⚠ ' + (sec.error || 'not available'))),
-          sec && sec.ok && list.length === 0 && h('div', { style: secBodyStyle }, 'nothing yet'),
-          list.map((it) => h(FeedItem, { key: it.id, it, meta }))
-        )
-      })
-    )
-  )
-}
-
 // ── Timeline (unified, searchable, credential-free) ──────────────────────────
 const SRC_LABEL = { bluesky: 'Bluesky', mastodon: 'Mastodon', youtube: 'YouTube', rss: 'RSS', hn: 'HN', reddit: 'Reddit', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', x: 'X' }
 const SRC_COLOR = { bluesky: '#3b82f6', mastodon: '#8b5cf6', youtube: '#ef4444', rss: '#f59e0b', hn: '#fb923c', reddit: '#f97316', instagram: '#ec4899', facebook: '#2563eb', twitch: '#a855f7', x: '#e5e7eb' }
@@ -576,6 +479,10 @@ function Timeline({ status }) {
   const avail = (data && data.sources) || Object.keys(SRC_LABEL)
   const errors = (data && data.errors) || {}
   const toggle = (k) => setOnly((o) => ({ ...o, [k]: !o[k] }))
+  // When X is the sole focused source, show the live interactive X site
+  // (full browser webview) instead of the API post list — X's free tier
+  // blocks API reads, and the live site is what "the X tab" should be.
+  const onlyX = only.x && Object.keys(only).filter((k) => only[k]).length === 1
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' } },
     h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
@@ -603,14 +510,18 @@ function Timeline({ status }) {
       boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
     } }, '↑ ' + pending.length + ' new post' + (pending.length === 1 ? '' : 's')),
     h('div', { ref: scroller, onScroll, style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
-      loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
-      !loading && items.length === 0 && h('div', { style: secBodyStyle }, q ? 'no matches' : 'nothing yet'),
-      items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
-      items.length > 0 && h('div', { style: {
-        padding: '10px 0 4px', textAlign: 'center', fontFamily: MONO,
-        fontSize: '0.5rem', letterSpacing: '0.16em', textTransform: 'uppercase',
-        color: 'var(--ui-text-tertiary, #8b93a7)',
-      } }, loading ? 'loading more…' : (maxedOut || per >= 60) ? '· end of feed ·' : 'scroll for more'),
+      onlyX
+        ? h(XBrowser, { initialUrl: 'https://x.com/home' })
+        : [
+            loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
+            !loading && items.length === 0 && h('div', { style: secBodyStyle }, q ? 'no matches' : 'nothing yet'),
+            items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
+            items.length > 0 && h('div', { style: {
+              padding: '10px 0 4px', textAlign: 'center', fontFamily: MONO,
+              fontSize: '0.5rem', letterSpacing: '0.16em', textTransform: 'uppercase',
+              color: 'var(--ui-text-tertiary, #8b93a7)',
+            } }, loading ? 'loading more…' : (maxedOut || per >= 60) ? '· end of feed ·' : 'scroll for more'),
+          ]
     )
   )
 }
@@ -1159,13 +1070,6 @@ const LIST_FIELDS = [
   { k: 'youtube_channels', label: 'YouTube channels', ph: 'UCxxxxxxxxxxxxxxxxxxxxxx', hint: 'Channel ID (starts with UC), from the channel’s About page.' },
 ]
 
-function ConfigChip({ label }) {
-  return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px dashed var(--ui-stroke-secondary, #2a2f3a)', fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } },
-    h('span', { style: { width: 6, height: 6, borderRadius: '50%', background: 'var(--ui-stroke-secondary, #2a2f3a)', display: 'inline-block' } }),
-    label + ' — add creds in Settings to activate'
-  )
-}
-
 // ── X Site (full interactive X in a webview) ──────────────────────────────────
 // A normal <iframe> to x.com is BLOCKED by X-Frame-Options: DENY, so a
 // read-only embed is the most an iframe can show. To get the FULL interactive
@@ -1269,21 +1173,6 @@ function XBrowser({ initialUrl }) {
     }),
     h('div', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)', padding: '4px 10px', borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)', fontFamily: MONO, letterSpacing: '0.08em' } },
       'Full X inside Hermes — log in once, stays logged in. Not an API feed.'),
-  )
-}
-
-function FeedItem({ it, meta }) {
-  const m = it.metrics || {}
-  return h('div', { style: feedItemStyle },
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3 } },
-      h('span', { style: { fontWeight: 600, fontSize: 12, color: 'var(--ui-text-secondary, #b6bccb)' } }, meta.dot ? (meta.dot(it) || '@' + (it.author || '?')) : ('@' + (it.author || '?'))),
-      h('span', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)' } }, ago(it.created_at))
-    ),
-    h('div', { style: { fontSize: 13, lineHeight: 1.4 } }, it[meta.field] || '(no text)'),
-    (m.like_count != null || m.retweet_count != null) && h('div', { style: { marginTop: 6, fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)', display: 'flex', gap: 12 } },
-      h('span', null, '♥ ' + (m.like_count ?? 0)),
-      h('span', null, '⟲ ' + (m.retweet_count ?? 0)),
-    ),
   )
 }
 
