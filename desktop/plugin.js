@@ -79,6 +79,36 @@ function ago(iso) {
   return Math.floor(s / 86400) + 'd'
 }
 
+// ── brand ─────────────────────────────────────────────────────────────────────
+// Matches Hermes desktop chrome: --dt-font-mono (JetBrains Mono), uppercase,
+// wide tracking — same treatment the app uses for its own wordmark.
+const MONO = 'var(--dt-font-mono, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace)'
+
+function Banner({ nConn, total, onRefresh }) {
+  return h('div', { style: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '10px 12px 8px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))',
+  } },
+    h('span', { style: {
+      fontFamily: MONO, fontSize: '0.72rem', fontWeight: 700,
+      letterSpacing: '0.34em', textTransform: 'uppercase',
+      color: 'var(--ui-text-primary, var(--text))',
+    } }, 'Hermes'),
+    h('span', { style: {
+      fontFamily: MONO, fontSize: '0.72rem', fontWeight: 400,
+      letterSpacing: '0.34em', textTransform: 'uppercase',
+      color: 'var(--ui-text-tertiary, #6b7280)',
+    } }, '⁄ Social'),
+    h('span', { style: { flex: 1 } }),
+    h('span', { style: {
+      fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.16em',
+      textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #6b7280)',
+      border: '1px solid var(--ui-stroke-secondary, var(--border))',
+      borderRadius: 4, padding: '2px 6px', background: 'rgba(255,255,255,0.03)',
+    } }, nConn + '/' + total + ' linked'),
+  )
+}
+
 function SocialPane() {
   const [tab, setTab] = React.useState('timeline')
   const [status, setStatus] = React.useState(null)
@@ -94,6 +124,7 @@ function SocialPane() {
   const nConn = PLATFORMS.filter((p) => connected[p.key]).length
 
   return h('div', { style: paneStyle },
+    h(Banner, { nConn, total: PLATFORMS.length }),
     h('div', { style: tabBarStyle },
       h(Tab, { active: tab === 'timeline', onClick: () => setTab('timeline'), label: 'Timeline' }),
       h(Tab, { active: tab === 'inbox', onClick: () => setTab('inbox'), label: 'Inbox' }),
@@ -102,8 +133,7 @@ function SocialPane() {
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
       h(Tab, { active: tab === 'sources', onClick: () => setTab('sources'), label: 'Sources' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
-      h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', fontSize: 11, color: '#888' } },
-        h('span', { style: { marginRight: 4 } }, nConn + '/' + PLATFORMS.length),
+      h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' } },
         PLATFORMS.map((p) =>
           h('span', { key: p.key, title: p.label + (connected[p.key] ? ' · connected' : ' · not set'),
             style: dotStyle(connected[p.key]) })
@@ -123,8 +153,12 @@ function SocialPane() {
 
 function Tab({ active, onClick, label }) {
   return h('button', { onClick, style: {
-    background: active ? 'var(--accent, #3b82f6)' : 'transparent', color: active ? '#fff' : 'var(--text)',
-    border: '1px solid var(--border)', borderRadius: 8, padding: '5px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    background: active ? 'var(--accent, #3b82f6)' : 'transparent',
+    color: active ? '#fff' : 'var(--ui-text-tertiary, #888)',
+    border: '1px solid ' + (active ? 'transparent' : 'var(--ui-stroke-secondary, var(--border))'),
+    borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+    fontFamily: MONO, fontSize: '0.58rem', fontWeight: 600,
+    letterSpacing: '0.14em', textTransform: 'uppercase', whiteSpace: 'nowrap', flexShrink: 0,
   } }, label)
 }
 
@@ -645,7 +679,7 @@ function FeedItem({ it, meta }) {
 
 // ── styles ──────────────────────────────────────────────────────────────────────
 const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--text)', fontFamily: 'system-ui, sans-serif' }
-const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--border)', alignItems: 'center' }
+const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, var(--border))', alignItems: 'center', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' }
 const fieldStyle = { padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg, #111)', color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
 const cardStyle = { border: '1px solid var(--border)', borderRadius: 10, padding: 12, background: 'rgba(128,128,128,0.05)' }
 const secTitleStyle = { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#888', marginBottom: 4 }
