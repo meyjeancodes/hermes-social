@@ -1,0 +1,20 @@
+{
+  "name": "hermes-social",
+  "version": "1.0.0",
+  "description": "The ultimate multi-platform social hub that runs **inside the Hermes desktop app**.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meyjeancodes/hermes-social.git"
+  },
+  "keywords": [],
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/meyjeancodes/hermes-social/issues"
+  },
+  "homepage": "https://github.com/meyjeancodes/hermes-social#readme",
+  "private": true
+}

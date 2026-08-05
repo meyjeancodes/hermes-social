@@ -80,7 +80,7 @@ function ago(iso) {
 }
 
 function SocialPane() {
-  const [tab, setTab] = React.useState('feeds')
+  const [tab, setTab] = React.useState('timeline')
   const [status, setStatus] = React.useState(null)
   const [err, setErr] = React.useState(null)
 
@@ -95,9 +95,12 @@ function SocialPane() {
 
   return h('div', { style: paneStyle },
     h('div', { style: tabBarStyle },
+      h(Tab, { active: tab === 'timeline', onClick: () => setTab('timeline'), label: 'Timeline' }),
+      h(Tab, { active: tab === 'inbox', onClick: () => setTab('inbox'), label: 'Inbox' }),
       h(Tab, { active: tab === 'feeds', onClick: () => setTab('feeds'), label: 'Feeds' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
+      h(Tab, { active: tab === 'sources', onClick: () => setTab('sources'), label: 'Sources' }),
       h(Tab, { active: tab === 'settings', onClick: () => setTab('settings'), label: 'Settings' }),
       h('div', { style: { marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', fontSize: 11, color: '#888' } },
         h('span', { style: { marginRight: 4 } }, nConn + '/' + PLATFORMS.length),
@@ -108,7 +111,10 @@ function SocialPane() {
       )
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
+    tab === 'timeline' ? h(Timeline, { status })
+      : tab === 'inbox' ? h(Inbox, { status })
+      : tab === 'sources' ? h(Sources, {})
+      : tab === 'feeds' ? h(Feeds, { status, refresh: loadStatus })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
       : h(Settings, { status, refresh: loadStatus })
@@ -250,16 +256,58 @@ function MassPost({ status, refresh }) {
   const [sel, setSel] = React.useState({})
   const [busy, setBusy] = React.useState(false)
   const [results, setResults] = React.useState(null)
+  const [imgUrl, setImgUrl] = React.useState('')
+  const [vidUrl, setVidUrl] = React.useState('')
+  const [when, setWhen] = React.useState('')
+  const [draftId, setDraftId] = React.useState(null)
+  const [drafts, setDrafts] = React.useState([])
+  const [note, setNote] = React.useState('')
   const over = text.length > 280
   const chosen = allConn.filter((k) => sel[k])
+
+  const loadDrafts = React.useCallback(() => {
+    fetch(API + '/drafts').then((r) => r.json()).then((d) => setDrafts(d.items || [])).catch(() => {})
+  }, [])
+  React.useEffect(() => { loadDrafts() }, [loadDrafts])
+
+  const body = () => ({
+    id: draftId || undefined, text, platforms: chosen,
+    image_url: imgUrl || undefined, video_url: vidUrl || undefined,
+  })
+
+  const saveDraft = (scheduled) => {
+    const b = body()
+    if (scheduled !== undefined) b.scheduled_at = scheduled
+    fetch(API + '/drafts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })
+      .then((r) => r.json()).then((d) => {
+        if (d.ok) { setDraftId(d.draft.id); setNote(scheduled ? 'scheduled for ' + new Date(scheduled).toLocaleString() : 'draft saved'); loadDrafts() }
+      })
+  }
+
+  const schedule = () => {
+    if (!when) { setNote('pick a date/time first'); return }
+    saveDraft(new Date(when).toISOString())
+  }
+
+  const openDraft = (d) => {
+    setDraftId(d.id); setText(d.text || ''); setImgUrl(d.image_url || ''); setVidUrl(d.video_url || '')
+    setSel((d.platforms || []).reduce((o, k) => ({ ...o, [k]: true }), {}))
+    setWhen(d.scheduled_at ? new Date(d.scheduled_at).toISOString().slice(0, 16) : '')
+    setNote('loaded draft ' + d.id)
+  }
+
+  const delDraft = (id) => {
+    fetch(API + '/drafts/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+      .then(() => { if (id === draftId) setDraftId(null); loadDrafts() })
+  }
 
   const toggle = (k) => setSel((o) => ({ ...o, [k]: !o[k] }))
 
   const blast = () => {
     if (busy || !text.trim() || chosen.length === 0) return
     setBusy(true); setResults(null)
-    fetch(API + '/mass', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, platforms: chosen }) })
-      .then((r) => r.json()).then((d) => { setResults(d.results || {}); refresh && refresh() })
+    fetch(API + '/mass', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body()) })
+      .then((r) => r.json()).then((d) => { setResults(d.results || {}); refresh && refresh(); loadDrafts() })
       .catch((e) => setResults({ _err: String(e) })).finally(() => setBusy(false))
   }
 
@@ -272,6 +320,30 @@ function MassPost({ status, refresh }) {
       allConn.map((k) => h('button', { key: k, onClick: () => toggle(k), style: platBtn(sel[k], true) }, PLATFORMS.find((p) => p.key === k).label))
     ),
     h('button', { onClick: blast, disabled: busy || !text.trim() || chosen.length === 0, style: btnStyle(false, busy || !text.trim() || chosen.length === 0) }, busy ? 'Posting…' : `Post to ${chosen.length || 0} platform${chosen.length === 1 ? '' : 's'}`),
+    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+      h('input', { placeholder: 'image URL (optional)', value: imgUrl, onChange: (e) => setImgUrl(e.target.value), style: { ...fieldStyle, flex: 1, minWidth: 160 } }),
+      h('input', { placeholder: 'video URL (optional)', value: vidUrl, onChange: (e) => setVidUrl(e.target.value), style: { ...fieldStyle, flex: 1, minWidth: 160 } }),
+    ),
+    imgUrl && h('img', { src: imgUrl, style: { maxHeight: 160, borderRadius: 8, objectFit: 'cover', alignSelf: 'flex-start' } }),
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+      h('input', { type: 'datetime-local', value: when, onChange: (e) => setWhen(e.target.value), style: { ...fieldStyle, width: 'auto' } }),
+      h('button', { onClick: schedule, disabled: !text.trim(), style: platBtn(true) }, '🕒 Schedule'),
+      h('button', { onClick: () => saveDraft(), disabled: !text.trim(), style: platBtn(false) }, '💾 Save draft'),
+      draftId && h('button', { onClick: () => { setDraftId(null); setText(''); setWhen(''); setNote('new draft') }, style: platBtn(false) }, '+ New'),
+      note && h('span', { style: { fontSize: 11, color: '#22c55e' } }, note),
+    ),
+    drafts.length > 0 && h('div', { style: { marginTop: 6 } },
+      h('div', { style: secTitleStyle }, 'Drafts & scheduled'),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+        drafts.map((d) => h('div', { key: d.id, style: { ...feedItemStyle, display: 'flex', gap: 8, alignItems: 'center' } },
+          h('span', { style: badgeStyle(d.status === 'posted'), fontSize: 10 }, d.status),
+          h('span', { style: { fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.text || '(empty)'),
+          d.scheduled_at && h('span', { style: { fontSize: 10, color: '#a78bfa' } }, new Date(d.scheduled_at).toLocaleString()),
+          h('button', { onClick: () => openDraft(d), style: platBtn(false) }, 'Edit'),
+          h('button', { onClick: () => delDraft(d.id), style: platBtn(false) }, '✕'),
+        ))
+      )
+    ),
     results && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 } },
       Object.entries(results).map(([k, v]) =>
         h('div', { key: k, style: { padding: 10, borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid var(--border)' } },
@@ -354,6 +426,168 @@ function Feeds({ status, refresh }) {
           list.map((it) => h(FeedItem, { key: it.id, it, meta }))
         )
       })
+    )
+  )
+}
+
+// ── Timeline (unified, searchable, credential-free) ──────────────────────────
+const SRC_LABEL = { bluesky: 'Bluesky', mastodon: 'Mastodon', youtube: 'YouTube', rss: 'RSS', hn: 'HN', reddit: 'Reddit', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', x: 'X' }
+const SRC_COLOR = { bluesky: '#3b82f6', mastodon: '#8b5cf6', youtube: '#ef4444', rss: '#f59e0b', hn: '#fb923c', reddit: '#f97316', instagram: '#ec4899', facebook: '#2563eb', twitch: '#a855f7', x: '#e5e7eb' }
+
+function useStream(path) {
+  const [data, setData] = React.useState(null)
+  const [loading, setLoading] = React.useState(false)
+  const [err, setErr] = React.useState(null)
+  const load = React.useCallback((qs) => {
+    setLoading(true); setErr(null)
+    fetch(API + path + (qs ? '?' + qs : ''))
+      .then((r) => r.json()).then(setData)
+      .catch((e) => setErr(String(e))).finally(() => setLoading(false))
+  }, [path])
+  return { data, loading, err, load }
+}
+
+function Timeline({ status }) {
+  const { data, loading, err, load } = useStream('/timeline')
+  const [q, setQ] = React.useState('')
+  const [only, setOnly] = React.useState({})
+  const [auto, setAuto] = React.useState(false)
+
+  const qs = React.useCallback(() => {
+    const sel = Object.keys(only).filter((k) => only[k])
+    const p = ['per=15', 'limit=80']
+    if (q.trim()) p.push('q=' + encodeURIComponent(q.trim()))
+    if (sel.length) p.push('sources=' + sel.join(','))
+    return p.join('&')
+  }, [q, only])
+
+  React.useEffect(() => { load(qs()) }, [])
+  React.useEffect(() => {
+    if (!auto) return
+    const t = setInterval(() => load(qs()), 60000)
+    return () => clearInterval(t)
+  }, [auto, qs, load])
+
+  const items = (data && data.items) || []
+  const avail = (data && data.sources) || Object.keys(SRC_LABEL)
+  const errors = (data && data.errors) || {}
+  const toggle = (k) => setOnly((o) => ({ ...o, [k]: !o[k] }))
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--border)' } },
+      h('input', { placeholder: 'Search the whole timeline…', value: q,
+        onChange: (e) => setQ(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') load(qs()) },
+        style: { ...fieldStyle, flex: 1 } }),
+      h('button', { onClick: () => load(qs()), disabled: loading, style: platBtn(false) }, loading ? '↻…' : '↻'),
+      h('button', { onClick: () => setAuto((a) => !a), title: 'auto-refresh every 60s', style: platBtn(auto) }, auto ? '⏱ on' : '⏱ off'),
+    ),
+    h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' } },
+      avail.map((k) => h('button', { key: k, onClick: () => { toggle(k); setTimeout(() => load(qs()), 0) },
+        style: { ...platBtn(!!only[k]), borderColor: only[k] ? SRC_COLOR[k] : 'var(--border)' } }, SRC_LABEL[k] || k)),
+      Object.keys(only).some((k) => only[k]) && h('button', { onClick: () => { setOnly({}); setTimeout(() => load('per=15&limit=80'), 0) }, style: { ...platBtn(false), marginLeft: 'auto' } }, 'clear'),
+    ),
+    err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
+    Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#f59e0b' } },
+      Object.entries(errors).map(([k, v]) => (SRC_LABEL[k] || k) + ': ' + v).join('  ·  ')),
+    h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
+      loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
+      !loading && items.length === 0 && h('div', { style: secBodyStyle }, q ? 'no matches' : 'nothing yet'),
+      items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
+    )
+  )
+}
+
+function StreamItem({ it }) {
+  const body = it.text || it.title || ''
+  const head = it.title && it.text && it.title !== it.text ? it.title : ''
+  return h('div', { style: feedItemStyle },
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 } },
+      h('span', { style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5, color: '#0b0b0b', background: SRC_COLOR[it.source] || '#888' } }, SRC_LABEL[it.source] || it.source),
+      it.author && h('span', { style: { fontSize: 12, color: '#cbd5e1', fontWeight: 600 } }, '@' + it.author),
+      h('span', { style: { fontSize: 10, color: '#666', marginLeft: 'auto' } }, ago(it.created_at)),
+    ),
+    head && h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 2 } }, head),
+    h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap' } }, body.slice(0, 600)),
+    it.media_url && h('img', { src: it.media_url, style: { marginTop: 6, maxWidth: '100%', borderRadius: 6, maxHeight: 220, objectFit: 'cover' } }),
+    h('div', { style: { marginTop: 6, fontSize: 11, color: '#888', display: 'flex', gap: 12, alignItems: 'center' } },
+      it.score != null && h('span', null, '♥ ' + it.score),
+      it.num_comments != null && h('span', null, '💬 ' + it.num_comments),
+      it.url && h('a', { href: it.url, target: '_blank', rel: 'noreferrer', style: { color: '#60a5fa', textDecoration: 'none', marginLeft: 'auto' } }, 'open ↗'),
+    )
+  )
+}
+
+// ── Inbox (engagement across platforms) ───────────────────────────────────────
+function Inbox({ status }) {
+  const { data, loading, err, load } = useStream('/inbox')
+  React.useEffect(() => { load('limit=40') }, [])
+  const items = (data && data.items) || []
+  const errors = (data && data.errors) || {}
+  return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
+    h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--border)' } },
+      h('span', { style: { fontSize: 12, color: '#888' } }, 'Mentions, replies and new followers across connected platforms.'),
+      h('button', { onClick: () => load('limit=40'), disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh'),
+    ),
+    err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
+    data && data.hint && h('div', { style: { padding: 10, fontSize: 12, color: '#f59e0b' } }, '⚠ ' + data.hint),
+    Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#f59e0b' } },
+      Object.entries(errors).map(([k, v]) => (SRC_LABEL[k] || k) + ': ' + v).join('  ·  ')),
+    h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
+      loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
+      !loading && items.length === 0 && !((data || {}).hint) && h('div', { style: secBodyStyle }, 'inbox is empty'),
+      items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
+    )
+  )
+}
+
+// ── Sources (credential-free feed config) ─────────────────────────────────────
+const SRC_FIELDS = [
+  { k: 'bluesky_handle', label: 'Bluesky handle', ph: 'someone.bsky.social' },
+  { k: 'mastodon_instance', label: 'Mastodon instance', ph: 'fosstodon.org' },
+  { k: 'youtube_channel_id', label: 'YouTube channel ID', ph: 'UCxxxxxxxxxxxxxxxxxxxxxx' },
+  { k: 'rss_url', label: 'RSS / Atom feed URL', ph: 'https://example.com/feed' },
+  { k: 'subreddit', label: 'Subreddit', ph: 'robotics' },
+]
+const TOGGLEABLE = ['bluesky', 'mastodon', 'youtube', 'rss', 'hn', 'reddit']
+
+function Sources() {
+  const [src, setSrc] = React.useState(null)
+  const [saved, setSaved] = React.useState(false)
+  const [busy, setBusy] = React.useState(false)
+  React.useEffect(() => {
+    fetch(API + '/sources').then((r) => r.json()).then((d) => setSrc(d.sources || {})).catch(() => setSrc({}))
+  }, [])
+  if (!src) return h('div', { style: { padding: 12, ...secBodyStyle } }, 'loading…')
+
+  const set = (k, v) => { setSrc((o) => ({ ...o, [k]: v })); setSaved(false) }
+  const enabled = src.enabled || []
+  const toggle = (k) => set('enabled', enabled.includes(k) ? enabled.filter((x) => x !== k) : [...enabled, k])
+  const save = () => {
+    setBusy(true)
+    fetch(API + '/sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sources: src }) })
+      .then((r) => r.json()).then((d) => { if (d.ok) { setSrc(d.sources); setSaved(true) } })
+      .finally(() => setBusy(false))
+  }
+
+  return h('div', { style: { overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 14 } },
+    h('div', { style: { fontSize: 12, color: '#888' } }, 'These feeds need no login at all — Bluesky, Mastodon, YouTube, RSS, Hacker News and Reddit all read anonymously. Everything here flows into Timeline.'),
+    h('div', { style: cardStyle },
+      h('div', { style: { fontSize: 13, fontWeight: 700, marginBottom: 8 } }, 'Active in Timeline'),
+      h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+        TOGGLEABLE.map((k) => h('button', { key: k, onClick: () => toggle(k),
+          style: { ...platBtn(enabled.includes(k)), borderColor: enabled.includes(k) ? SRC_COLOR[k] : 'var(--border)' } }, SRC_LABEL[k] || k))
+      )
+    ),
+    h('div', { style: cardStyle },
+      SRC_FIELDS.map((f) => h('div', { key: f.k, style: { marginBottom: 10 } },
+        h('label', { style: { fontSize: 11, color: '#aaa', display: 'block', marginBottom: 3 } }, f.label),
+        h('input', { placeholder: f.ph, value: src[f.k] || '', onChange: (e) => set(f.k, e.target.value), style: fieldStyle })
+      )),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+        h('button', { onClick: save, disabled: busy, style: btnStyle(true, busy) }, busy ? 'Saving…' : 'Save sources'),
+        saved && h('span', { style: { fontSize: 11, color: '#22c55e' } }, 'saved — Timeline will use these on next refresh'),
+      )
     )
   )
 }

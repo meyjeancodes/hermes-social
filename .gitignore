@@ -1,14 +1,15 @@
-.venv/
-__pycache__/
-*.pyc
-*.egg-info/
-dist/
-build/
-serve.log
-.env
-credentials.json
-.DS_Store
 
-# never commit real secrets
+__pycache__/
+.DS_Store
+.env
+.venv/
+*.egg-info/
 *.env
+*.pyc
 *secrets*
+# never commit real secrets
+build/
+credentials.json
+dist/
+node_modules/
+serve.log

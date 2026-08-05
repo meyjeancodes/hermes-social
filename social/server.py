@@ -9,10 +9,11 @@ in ~/.hermes/.env.
 from __future__ import annotations
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from . import config, platforms
+from . import config, drafts, platforms, sources
 
 HOST = "127.0.0.1"
 PORT = 8731
@@ -38,6 +39,30 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
         platform = params.get("platform", ["all"])[0]
         feed = params.get("feed", [""])[0]
         return _feeds(platform, limit, feed)
+    if method == "GET" and path == "/timeline":
+        config.reload()
+        return _timeline(params)
+    if method == "GET" and path == "/inbox":
+        config.reload()
+        return _inbox(int(params.get("limit", ["30"])[0]))
+    if method == "GET" and path == "/drafts":
+        return drafts.list_drafts(params.get("status", [""])[0])
+    if method == "POST" and seg and seg[0] == "drafts":
+        config.reload()
+        if len(seg) > 1 and seg[1] == "delete":
+            return drafts.delete_draft(body.get("id", ""))
+        if len(seg) > 1 and seg[1] == "send":
+            d = next((x for x in drafts.list_drafts()["items"] if x["id"] == body.get("id")), None)
+            if not d:
+                return {"ok": False, "error": "no such draft"}
+            res = _mass_post(d)
+            drafts.save_draft({"id": d["id"], "status": "posted"})
+            return res
+        return drafts.save_draft(body)
+    if method == "GET" and path == "/sources":
+        return {"ok": True, "sources": _src_prefs()}
+    if method == "POST" and seg and seg[0] == "sources":
+        return _save_src_prefs(body.get("sources", {}))
     if method == "POST" and seg and seg[0] == "verify":
         config.reload()
         plat = seg[1] if len(seg) > 1 else body.get("platform")
@@ -70,6 +95,118 @@ def _dispatch(method: str, path: str, body: dict, params: dict) -> dict:
     if method == "POST" and seg and seg[0] == "retweet":
         return _act("retweet", seg, body)
     return {"ok": False, "error": "no such route", "path": path}
+
+
+PUBLIC_SOURCES = ("bluesky", "mastodon", "youtube", "rss", "hn", "reddit")
+
+SRC_PREFS_PATH = os.path.expanduser("~/.config/social/sources.json")
+SRC_DEFAULTS = {
+    "bluesky_handle": "bsky.app",
+    "mastodon_instance": "fosstodon.org",
+    "youtube_channel_id": "",
+    "rss_url": "",
+    "subreddit": "",
+    "enabled": list(PUBLIC_SOURCES),
+}
+
+
+def _src_prefs() -> dict:
+    try:
+        with open(SRC_PREFS_PATH, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        saved = {}
+    out = dict(SRC_DEFAULTS)
+    out.update({k: v for k, v in saved.items() if k in SRC_DEFAULTS})
+    return out
+
+
+def _save_src_prefs(new: dict) -> dict:
+    prefs = _src_prefs()
+    prefs.update({k: v for k, v in (new or {}).items() if k in SRC_DEFAULTS})
+    os.makedirs(os.path.dirname(SRC_PREFS_PATH), exist_ok=True)
+    with open(SRC_PREFS_PATH, "w", encoding="utf-8") as f:
+        json.dump(prefs, f, indent=2)
+    return {"ok": True, "sources": prefs}
+
+
+def _public_sections(limit: int, only: list | None = None) -> dict:
+    """Fetch every credential-free source, in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    p = _src_prefs()
+    enabled = only if only is not None else p.get("enabled", list(PUBLIC_SOURCES))
+    jobs = {
+        "bluesky": lambda: sources.bluesky_feeds(limit, p.get("bluesky_handle", "")),
+        "mastodon": lambda: sources.mastodon_feeds(limit, p.get("mastodon_instance", "")),
+        "youtube": lambda: sources.youtube_feeds(limit, channel_id=p.get("youtube_channel_id", "")),
+        "rss": lambda: sources.rss_feeds(p.get("rss_url", ""), limit),
+        "hn": lambda: platforms.hn_feeds(limit),
+        "reddit": lambda: platforms.reddit_feeds(limit, subreddit=p.get("subreddit", "") or _get("subreddit")),
+    }
+    jobs = {k: v for k, v in jobs.items() if k in enabled}
+    out: dict = {}
+    if not jobs:
+        return out
+    with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+        futs = {k: ex.submit(fn) for k, fn in jobs.items()}
+        for k, fut in futs.items():
+            try:
+                out[k] = fut.result(timeout=30)
+            except Exception as e:
+                out[k] = {"ok": False, "error": str(e)}
+    return out
+
+
+def _timeline(params: dict) -> dict:
+    """One merged, reverse-chronological, searchable stream."""
+    limit = int(params.get("limit", ["60"])[0])
+    per = int(params.get("per", ["15"])[0])
+    q = params.get("q", [""])[0]
+    only = params.get("sources", [""])[0]
+    only_list = [s for s in only.split(",") if s] or None
+    sections = _public_sections(per, only_list)
+    # authenticated platforms join the stream when configured
+    conf = config.configured()
+    if (only_list is None or "instagram" in only_list) and conf.get("instagram"):
+        sections["instagram"] = platforms.ig_feeds(per)
+    if (only_list is None or "facebook" in only_list) and conf.get("facebook"):
+        sections["facebook"] = platforms.fb_feeds(per)
+    if (only_list is None or "twitch" in only_list) and conf.get("twitch"):
+        sections["twitch"] = platforms.twitch_feeds(per)
+    merged = sources.merge(sections, query=q, limit=limit)
+    merged["sources"] = sorted(sections.keys())
+    return merged
+
+
+def _inbox(limit: int = 30) -> dict:
+    """Engagement: mentions/replies/notifications across whatever we can read."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    p = _src_prefs()
+    conf = config.configured()
+    jobs = {}
+    if conf.get("x"):
+        jobs["x"] = lambda: platforms.x_feeds(limit, feed="mentions")
+    if conf.get("twitch"):
+        jobs["twitch"] = lambda: platforms.twitch_feeds(limit)  # followers = engagement
+    handle = p.get("bluesky_handle", "")
+    if handle:
+        jobs["bluesky"] = lambda: sources.bluesky_search("@" + handle.lstrip("@"), limit)
+    out: dict = {}
+    if jobs:
+        with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
+            futs = {k: ex.submit(fn) for k, fn in jobs.items()}
+            for k, fut in futs.items():
+                try:
+                    out[k] = fut.result(timeout=30)
+                except Exception as e:
+                    out[k] = {"ok": False, "error": str(e)}
+    merged = sources.merge(out, limit=limit)
+    merged["sources"] = sorted(out.keys())
+    if not out:
+        merged["hint"] = "Connect X (mentions) or set a Bluesky handle in Sources to populate the inbox."
+    return merged
 
 
 def _verify(platform: str) -> dict:
@@ -124,6 +261,8 @@ def _mass_post(body: dict) -> dict:
     text = body.get("text", "")
     platforms_sel = body.get("platforms", []) or []
     results = {}
+    if not platforms_sel:
+        return {"ok": False, "error": "no platforms selected", "results": {}}
     for p in platforms_sel:
         try:
             if p == "x":
@@ -234,6 +373,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host: str = HOST, port: int = PORT) -> ThreadingHTTPServer:
     srv = ThreadingHTTPServer((host, port), Handler)
+    # scheduled drafts fire from inside the server process
+    drafts.start_scheduler(lambda d: _mass_post(d))
     return srv
 
 
