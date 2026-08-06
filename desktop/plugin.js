@@ -262,6 +262,12 @@ function Banner({ nConn, total }) {
       letterSpacing: '0.30em', textTransform: 'uppercase',
       color: 'var(--ui-text-tertiary, #8b93a7)', lineHeight: 1,
     } }, 'Social'),
+    h('span', { title: 'Press ⌘K to jump to any site, tab, or Radar term', style: {
+      fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.1em',
+      textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)',
+      border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 999,
+      padding: '3px 8px', lineHeight: 1, cursor: 'pointer',
+    }, onClick: () => setPalette(true) }, '⌘K'),
     h('span', { style: { flex: 1 } }),
     h('span', { title: nConn + ' of ' + total + ' platforms have credentials', style: {
       fontFamily: MONO, fontSize: '0.52rem', letterSpacing: '0.16em',
@@ -281,9 +287,28 @@ function SocialPane() {
   // Zen hides the wordmark + tab bar so a live site gets the entire pane.
   const [zen, setZen] = usePref('zen', false)
   // Compose asks the hub to open a prefilled intent URL: {key, url, nonce}.
-  const [jump, setJump] = React.useState(null)
+  const [jump, setJump] = usePref('jump', null)
+  const [palette, setPalette] = React.useState(false)
   const openInBrowse = React.useCallback((key, url) => {
     setJump({ key, url, nonce: Date.now() })
+    setTab('browse')
+  }, [])
+
+  // ⌘K opens the in-pane command palette (scoped so it never hijacks the app's
+  // global ⌘K and never routes to the OS). Esc/blur closes it.
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault(); setPalette((p) => !p)
+      }
+    }
+    if (typeof window === 'undefined' || !window.addEventListener) return
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const goSite = React.useCallback((key) => {
+    setJump({ key, url: null, nonce: Date.now() })
     setTab('browse')
   }, [])
 
@@ -324,8 +349,83 @@ function SocialPane() {
       : tab === 'inbox' ? h(Inbox, { status })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus, openInBrowse })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
-      : h(SettingsHub, { status, refresh: loadStatus })
+      : h(SettingsHub, { status, refresh: loadStatus }),
+    palette && h(CommandPalette, {
+      onClose: () => setPalette(false),
+      setTab, setZen, openInBrowse, goSite,
+    }),
   )
+}
+
+// ── Command palette (⌘K inside the pane) ──────────────────────────────────────
+// The app's own ⌘K is global; this one is scoped to the Social pane so a
+// keypress never leaves the hub to go rummaging in the OS. It jumps to any
+// site's live view, switches tabs, opens Radar with a term, and toggles Zen —
+// all from one fuzzy input. Kept inside the pane (not via the SDK palette area)
+// so it can't throw at runtime and so it has access to this file's state.
+function CommandPalette({ onClose, setTab, setZen, openInBrowse, goSite }) {
+  const [q, setQ] = React.useState('')
+  const inputRef = React.useRef(null)
+  const [sel, setSel] = React.useState(0)
+  React.useEffect(() => { if (inputRef.current) inputRef.current.focus() }, [])
+
+  const cmds = React.useMemo(() => {
+    const list = []
+    list.push({ id: 'tab:browse', label: 'Go to Browse', run: () => setTab('browse') })
+    list.push({ id: 'tab:radar', label: 'Go to Radar', run: () => setTab('radar') })
+    list.push({ id: 'tab:timeline', label: 'Go to Timeline', run: () => setTab('timeline') })
+    list.push({ id: 'tab:compose', label: 'Go to Compose', run: () => setTab('compose') })
+    list.push({ id: 'tab:inbox', label: 'Go to Inbox', run: () => setTab('inbox') })
+    list.push({ id: 'tab:settings', label: 'Go to Settings', run: () => setTab('settings') })
+    list.push({ id: 'act:zen', label: 'Toggle Zen (full-pane) mode', run: () => setZen((z) => !z) })
+    for (const s of SITES) {
+      list.push({ id: 'site:' + s.key, label: 'Open ' + s.label, hint: s.mark, run: () => goSite(s.key) })
+      if (SITE_SEARCH[s.key]) {
+        list.push({ id: 'radar:' + s.key, label: 'Radar-scan on ' + s.label, hint: '◎', run: () => { setTab('radar'); openInBrowse(s.key, SITE_SEARCH[s.key](q || s.label)) } })
+      }
+    }
+    const t = q.trim().toLowerCase()
+    if (!t) return list
+    return list.filter((c) => c.label.toLowerCase().includes(t) || c.id.includes(t))
+  }, [q, setTab, setZen, goSite, openInBrowse])
+
+  const pick = (c) => { if (!c) return; c.run(); onClose() }
+  React.useEffect(() => { setSel(0) }, [q])
+
+  return h('div', {
+    onClick: onClose,
+    style: { position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', justifyContent: 'center', paddingTop: 40, zIndex: 50 },
+  }, h('div', {
+    onClick: (e) => e.stopPropagation(),
+    style: { width: 'min(560px, 92%)', maxHeight: '70%', display: 'flex', flexDirection: 'column', background: 'var(--ui-bg-elevated, #16181d)', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 12, overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,0.5)' },
+  },
+    h('input', {
+      ref: inputRef, value: q, onChange: (e) => setQ(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); onClose() }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(s + 1, cmds.length - 1)) }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)) }
+        else if (e.key === 'Enter') { e.preventDefault(); pick(cmds[sel]) }
+      },
+      placeholder: 'Jump to a site, tab, or Radar term…  (↑↓ navigate, ↵ open, esc close)',
+      style: { padding: '12px 14px', fontSize: 13, border: 'none', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'transparent', color: 'var(--ui-text-primary, #e7e9ee)', fontFamily: 'inherit', outline: 'none' },
+    }),
+    h('div', { style: { overflowY: 'auto', padding: 6 } },
+      cmds.length === 0 && h('div', { style: { padding: 14, color: 'var(--ui-text-tertiary, #8b93a7)', fontSize: 12 } }, 'No matches'),
+      cmds.map((c, i) => h('div', {
+        key: c.id, onClick: () => pick(c),
+        onMouseEnter: () => setSel(i),
+        style: {
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+          background: i === sel ? 'var(--ui-row-active-background, rgba(127,127,127,0.16))' : 'transparent',
+          color: 'var(--ui-text-primary, #e7e9ee)', fontSize: 12.5,
+        },
+      },
+        c.hint && h('span', { style: { color: 'var(--ui-text-tertiary, #8b93a7)', fontFamily: MONO, fontSize: '0.7rem' } }, c.hint),
+        c.label,
+      )),
+    ),
+  ))
 }
 
 function Tab({ active, onClick, label }) {
@@ -1466,6 +1566,42 @@ function ComposeOnSite({ text, openInBrowse }) {
 // we keep the N most-recently-used guests alive and evict the rest. Evicted
 // sites lose scroll position but NOT their login: the session cookie lives in
 // the persistent partition, not the guest.
+// Unread badges. A live webview is opaque to React, so we approximate "new
+// activity" the way a real feed does: while a site's guest is hidden, its
+// page emits favicon/title changes (new DMs, notifications, "X new posts").
+// We subscribe via the app's webview 'page-title-updated' signal and increment
+// a counter when the title changes while the site isn't the active view.
+// Clicking the site clears its badge. This is heuristic — it counts title
+// mutations, not message contents — but it's a genuine "something changed"
+// signal across all 18 sites with zero per-platform API work.
+function useUnread(active, split) {
+  const [counts, setCounts] = React.useState(() => loadPref('browse.unread', {}))
+  const seen = React.useRef({})
+  // Reset the visible site's count the moment it becomes active.
+  React.useEffect(() => {
+    setCounts((c) => {
+      if (counts[active] == null && counts[split] == null) return c
+      const next = { ...c }
+      delete next[active]
+      if (split) delete next[split]
+      return next
+    })
+  }, [active, split])
+  const bump = React.useCallback((key, title) => {
+    if (key === active || key === split) return
+    // Many sites append a bracketed count to the title ("(3) New message").
+    // Prefer that exact number when present; otherwise just +1 per change.
+    let n = null
+    if (title) {
+      const m = title.match(/\((\d+)\)/) || title.match(/\[(\d+)\]/)
+      if (m) n = Math.max(1, parseInt(m[1], 10))
+    }
+    setCounts((c) => ({ ...c, [key]: n != null ? n : (c[key] || 0) + 1 }))
+  }, [active, split])
+  React.useEffect(() => { savePref('browse.unread', counts) }, [counts])
+  return { counts, bump }
+}
+
 const MAX_LIVE = 4
 
 function BrowseHub({ zen, setZen, jump }) {
@@ -1480,6 +1616,7 @@ function BrowseHub({ zen, setZen, jump }) {
   const [overrides, setOverrides] = React.useState({})
   // Split view: a second live site pinned beside the first.
   const [split, setSplit] = usePref('browse.split', null)
+  const { counts, bump } = useUnread(active, split)
 
   // Promote a site to the front of the MRU list, mounting it if needed.
   const touch = React.useCallback((key) => {
@@ -1544,6 +1681,7 @@ function BrowseHub({ zen, setZen, jump }) {
   const railBtn = (s, i) => {
     const live = mru.includes(s.key)
     const ink = inkFor(s, light)
+    const n = counts[s.key]
     return h('button', {
       key: s.key,
       onClick: (e) => { if (e.altKey || e.metaKey) pinSplit(s.key); else pick(s.key) },
@@ -1564,6 +1702,16 @@ function BrowseHub({ zen, setZen, jump }) {
       h('span', { style: { color: ink, fontSize: '0.72rem', lineHeight: 1 } }, s.mark),
       s.label,
       split === s.key && h('span', { style: { color: ink, fontSize: '0.6rem' } }, '◧'),
+      n ? h('span', {
+        title: n + ' new on ' + s.label,
+        style: {
+          minWidth: 15, height: 15, padding: '0 4px', borderRadius: 999,
+          background: 'var(--ui-blue, #3b82f6)', color: '#fff',
+          fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.04em',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+          flexShrink: 0, boxSizing: 'border-box',
+        },
+      }, n > 99 ? '99+' : String(n)) : null,
     )
   }
 
@@ -1591,7 +1739,7 @@ function BrowseHub({ zen, setZen, jump }) {
         flex: shown ? 1 : 0,
         borderLeft: isSplit ? '1px solid var(--ui-stroke-secondary, #2a2f3a)' : 'none',
       },
-    }, h(SiteFrame, { site: SITE_BY_KEY[key] || SITE_BY_KEY.x, override: overrides[key], onClose: () => close(key) }))
+    }, h(SiteFrame, { site: SITE_BY_KEY[key] || SITE_BY_KEY.x, override: overrides[key], onClose: () => close(key), onTitle: (t) => bump(key, t) }))
   })
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
@@ -1627,9 +1775,15 @@ function Radar() {
   const [draft, setDraft] = React.useState(() => loadPref('radar.q', ''))
   const [picked, setPicked] = usePref('radar.sites', RADAR_DEFAULT)
   const [cols, setCols] = usePref('radar.cols', 2)
+  const [sortMode, setSortMode] = usePref('radar.sort', 'new') // 'new' | 'az' | 'recent'
   const [nonce, setNonce] = React.useState(0)
   const searchable = SITES.filter((s) => SITE_SEARCH[s.key])
   const active = searchable.filter((s) => picked.includes(s.key))
+  const ordered = sortMode === 'az'
+    ? [...active].sort((a, b) => a.label.localeCompare(b.label))
+    : sortMode === 'recent'
+      ? [...active].sort((a, b) => (loadPref('browse.opened', ['x']).indexOf(b.key) - loadPref('browse.opened', ['x']).indexOf(a.key)))
+      : active
 
   const run = () => {
     const t = draft.trim()
@@ -1653,6 +1807,15 @@ function Radar() {
         title: 'Grid columns',
         style: { ...platBtn(false), padding: '6px 11px', fontFamily: MONO, fontSize: '0.58rem', letterSpacing: '0.12em', textTransform: 'uppercase' },
       }, cols + '-up'),
+      h('select', {
+        value: sortMode, onChange: (e) => setSortMode(e.target.value),
+        title: 'Tile order',
+        style: { ...fieldStyle, width: 'auto', padding: '6px 8px', fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.1em', textTransform: 'uppercase' },
+      },
+        h('option', { value: 'new' }, 'Newest'),
+        h('option', { value: 'az' }, 'A–Z'),
+        h('option', { value: 'recent' }, 'Most used'),
+      ),
     ),
     h('div', { style: { display: 'flex', gap: 5, padding: '0 10px 8px', flexWrap: 'wrap', flexShrink: 0, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
       searchable.map((s) => h('button', {
@@ -1667,7 +1830,17 @@ function Radar() {
           letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
         },
       }, h('span', { style: { color: inkFor(s, light), fontSize: '0.7rem', lineHeight: 1 } }, s.mark), s.label)),
-    ),
+ ),
+ // One-tap trending probes — the questions you'll actually ask.
+ h('div', { style: { display: 'flex', gap: 5, padding: '0 10px 8px', flexWrap: 'wrap', flexShrink: 0, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+ h('span', { style: { fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-quaternary, #6b7280)', alignSelf: 'center', marginRight: 2 } }, 'Trending:'),
+ ['BlackCat Robotics', 'AI agents', 'robotics funding', 'Y Combinator'].map((t) =>
+   h('button', {
+     key: t, onClick: () => { setDraft(t); setQ(t); setNonce((n) => n + 1) },
+     title: 'Radar-scan "' + t + '"',
+     style: { padding: '3px 9px', borderRadius: 999, cursor: 'pointer', background: F_SOFT, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', color: 'var(--ui-text-secondary, #b6bccb)', fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' },
+   }, t)),
+ ),
     !q
       ? h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 } },
           h('div', { style: { maxWidth: 460, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10 } },
@@ -1686,7 +1859,7 @@ function Radar() {
         },
           active.length === 0
             ? h('div', { style: secBodyStyle }, 'Pick at least one platform above.')
-            : active.map((s) => h('div', {
+            : ordered.map((s) => h('div', {
                 key: s.key + ':' + nonce,
                 style: { minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, overflow: 'hidden' },
               }, h(SiteFrame, { site: s, override: SITE_SEARCH[s.key](q), compact: true })))
@@ -1697,7 +1870,7 @@ function Radar() {
 
 // One live site. `override` (an intent URL from Compose/Radar) wins over the
 // default. `compact` trims the chrome for Radar's grid tiles.
-function SiteFrame({ site, override, onClose, compact }) {
+function SiteFrame({ site, override, onClose, compact, onTitle }) {
   const start = override || site.url
   const wv = React.useRef(null)
   const light = useIsLight()
@@ -1729,6 +1902,7 @@ function SiteFrame({ site, override, onClose, compact }) {
         '. If you are offline or behind a proxy, the webview cannot reach it.')
     }
     const onNav = (e) => { if (e && e.url) setUrl(e.url) }
+    const onTitle = (e) => { if (e && e.title && typeof onTitle === 'function') onTitle(e.title) }
     const onCanGo = (e) => { setNav({ canGoBack: !!(e && e.canGoBack), canGoForward: !!(e && e.canGoForward) }) }
     // Popups (OAuth). Without this, "Continue with Apple/Google" opens a popup
     // that is dropped, so login silently fails. Auth URLs run in this guest;
@@ -1750,6 +1924,7 @@ function SiteFrame({ site, override, onClose, compact }) {
     el.addEventListener('did-navigate', onNav)
     el.addEventListener('did-navigate-in-page', onNav)
     el.addEventListener('did-change-can-go-back-forward', onCanGo)
+    el.addEventListener('page-title-updated', onTitle)
     el.addEventListener('new-window', onNewWindow)
     return () => {
       el.removeEventListener('did-attach', onDom)
@@ -1942,7 +2117,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, SocialPane, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, SocialPane, CommandPalette, useUnread, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
 
 export default {
   id: ID,

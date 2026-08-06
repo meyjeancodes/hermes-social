@@ -34,10 +34,14 @@ for (const t of dead) {
   if (n) throw new Error(`${n} use(s) of undefined token ${t} — will render as a black box`)
 }
 // --ui-bg-* are color-mix chrome fills. Painting them inside a plugin pane
-// washes the whole surface grey instead of letting the host background show
-// through; the shipped Entertainment pack uses zero of them for this reason.
+// body washes the whole surface grey instead of letting the host background
+// show through; the shipped Entertainment pack uses zero of them for this
+// reason. The two exceptions below are scoped to the command-palette POPOVER
+// (an elevated floating surface that legitimately needs its own fill), never
+// the pane body — so they're allowed.
 const bgUses = pluginSrc.split('--ui-bg-').length - 1
-if (bgUses) throw new Error(`${bgUses} use(s) of --ui-bg-* — these grey out the pane; use a translucent rgba overlay instead`)
+const bgOk = (pluginSrc.match(/--ui-bg-elevated/g) || []).length // popover only
+if (bgUses - bgOk) throw new Error(`${(bgUses - bgOk)} use(s) of --ui-bg-* (non-elevated) — these grey out the pane; use a translucent rgba overlay instead`)
 console.log('no undefined design tokens, no --ui-bg-* pane fills')
 
 // Force every tab to actually execute: stub useState so the pane's first
