@@ -204,4 +204,17 @@ console.log('watch:')
   const pane = renderToString(React.createElement(SocialPane))
   ok('pane renders Watch tab', pane.includes('Watch'))
 }
+// 12. Radar-jump from the palette actually fires a scan (regression test for
+//     the dead "Radar-scan on X" command). Radar now reads `jump` and runs.
+console.log('radar jump:')
+{
+  // Radar normally shows the empty state until a scan runs. With a jump whose
+  // url is a search intent, it must render that term's webviews immediately.
+  const jump = { key: 'radar', url: SITE_SEARCH.x('black cat'), nonce: Date.now() }
+  const html = renderToString(React.createElement(Radar, { jump }))
+  ok('renders the scanned term in a tile', html.includes('x.com') || html.includes('black'))
+  // And a plain Radar (no jump) still shows the empty-state CTA, not a scan.
+  const empty = renderToString(React.createElement(Radar, {}))
+  ok('no jump -> empty-state CTA', empty.includes('Radar') && !empty.includes('gridTemplateColumns'))
+}
 process.exit(fail ? 1 : 0)

@@ -346,7 +346,7 @@ function SocialPane() {
     ),
     err && h('div', { style: { padding: 10, color: C_ERR, fontSize: 12 } }, err),
     tab === 'browse' ? h(BrowseHub, { zen, setZen, jump })
-      : tab === 'radar' ? h(Radar)
+      : tab === 'radar' ? h(Radar, { jump })
       : tab === 'timeline' ? h(Timeline, { status, openInBrowse })
       : tab === 'watch' ? h(Watch, { onNewTotal: setWatchNew })
       : tab === 'inbox' ? h(Inbox, { status })
@@ -385,7 +385,7 @@ function CommandPalette({ onClose, setTab, setZen, openInBrowse, goSite }) {
     for (const s of SITES) {
       list.push({ id: 'site:' + s.key, label: 'Open ' + s.label, hint: s.mark, run: () => goSite(s.key) })
       if (SITE_SEARCH[s.key]) {
-        list.push({ id: 'radar:' + s.key, label: 'Radar-scan on ' + s.label, hint: '◎', run: () => { setTab('radar'); openInBrowse(s.key, SITE_SEARCH[s.key](q || s.label)) } })
+        list.push({ id: 'radar:' + s.key, label: 'Radar-scan on ' + s.label, hint: '◎', run: () => { setTab('radar'); setJump({ key: 'radar', url: SITE_SEARCH[s.key](q || s.label), nonce: Date.now() }) } })
       }
     }
     const t = q.trim().toLowerCase()
@@ -1899,7 +1899,7 @@ function Watch({ onNewTotal }) {
   )
 }
 
-function Radar() {
+function Radar({ jump }) {
   const light = useIsLight()
   const [q, setQ] = usePref('radar.q', '')
   const [draft, setDraft] = React.useState(() => loadPref('radar.q', ''))
@@ -1914,6 +1914,17 @@ function Radar() {
     : sortMode === 'recent'
       ? [...active].sort((a, b) => (loadPref('browse.opened', ['x']).indexOf(b.key) - loadPref('browse.opened', ['x']).indexOf(a.key)))
       : active
+
+  // A Radar scan handed in via the command palette (jump.url is a prefilled
+  // search intent). Run it the moment we mount/receive it. Without this, the
+  // palette's "Radar-scan on X" command set BrowseHub's jump and did nothing
+  // here — the grid only reads our own q/draft/nonce, which were untouched.
+  React.useEffect(() => {
+    if (jump && jump.url && (jump.key === 'radar' || !jump.key)) {
+      const term = decodeURIComponent((jump.url.split('q=')[1] || '').split('&')[0] || '')
+      if (term) { setDraft(term); setQ(term); setNonce((n) => n + 1) }
+    }
+  }, [jump && jump.nonce])
 
   const run = () => {
     const t = draft.trim()
