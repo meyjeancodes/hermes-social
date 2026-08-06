@@ -18,7 +18,8 @@ globalThis.document = globalThis.document || {
 }
 
 const mod = await import('../desktop/plugin.js')
-const { BrowseHub, SiteFrame, ComposeOnSite, SITES, SITE_INTENT, StreamItem } = mod.__test__
+const { BrowseHub, SiteFrame, ComposeOnSite, Radar, SITES, SITE_INTENT, SITE_SEARCH,
+        CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, StreamItem } = mod.__test__
 
 let fail = 0
 const ok = (label, cond, extra = '') => {
@@ -110,6 +111,58 @@ try {
   ok('no "Open here" without hub', !without.includes('Open here'))
 } catch (e) {
   ok('StreamItem', false, e.message)
+}
+
+// 7. Radar: search builders, CSS validity, grid render, MRU eviction cap.
+console.log('radar search urls:')
+for (const [k, fn] of Object.entries(SITE_SEARCH)) {
+  if (!fn) continue
+  const u = fn('black cat robotics')
+  const enc = /^https:\/\//.test(u) && !/\s/.test(u) && u.length > 20
+  ok('search ' + k.padEnd(12) + (enc ? '' : ' ' + u), enc)
+}
+ok('every searchable key is a real site',
+  Object.keys(SITE_SEARCH).every((k) => SITES.some((s) => s.key === k)))
+
+console.log('cleaner css:')
+for (const [k, css] of Object.entries(CLEAN_CSS)) {
+  // Balanced braces and a display:none payload — a malformed rule silently
+  // voids everything after it in insertCSS, so this is worth asserting.
+  const balanced = (css.match(/{/g) || []).length === (css.match(/}/g) || []).length
+  const hides = css.includes('display: none')
+  ok('css ' + k.padEnd(12), balanced && hides, balanced ? '' : 'unbalanced braces')
+}
+ok('universal css balanced',
+  (CLEAN_UNIVERSAL.match(/{/g) || []).length === (CLEAN_UNIVERSAL.match(/}/g) || []).length)
+ok('cleanCssFor always returns universal rules',
+  SITES.every((s) => cleanCssFor(s.key).includes('cookie')))
+
+console.log('radar grid:')
+try {
+  ok('empty state renders', renderToString(React.createElement(Radar)).includes('Radar'))
+  store.set('hermes-social:radar.q', JSON.stringify('robotics'))
+  store.set('hermes-social:radar.sites', JSON.stringify(['x', 'reddit', 'hn']))
+  const html = renderToString(React.createElement(Radar))
+  const n = (html.match(/<webview/g) || []).length
+  ok('3 picked platforms -> 3 live webviews', n === 3, 'got ' + n)
+  ok('search terms reached the guests', html.includes('robotics'))
+} catch (e) {
+  ok('Radar', false, e.message)
+}
+
+// 8. The memory fix: BrowseHub must never mount more than MAX_LIVE guests,
+// no matter how many sites a previous session left in the opened list.
+console.log('mru eviction (the memory fix):')
+store.set('hermes-social:browse.opened', JSON.stringify(SITES.map((s) => s.key)))
+store.set('hermes-social:browse.split', JSON.stringify(null))
+try {
+  const html = renderToString(React.createElement(BrowseHub, { zen: false, setZen() {}, jump: null }))
+  const mounted = (html.match(/<webview/g) || []).length
+  ok('all 18 restored -> only ' + mounted + ' mounted (cap ' + MAX_LIVE + ')',
+    mounted > 0 && mounted <= MAX_LIVE)
+  ok('rail still offers every site', SITES.every((s) => html.includes(s.label)))
+} catch (e) {
+  ok('MRU eviction', false, e.message)
 }
 
 console.log(fail ? '\n' + fail + ' FAILURE(S)' : '\nALL BROWSE CHECKS PASSED')

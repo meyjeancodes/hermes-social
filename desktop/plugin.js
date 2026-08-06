@@ -157,14 +157,16 @@ function SocialPane() {
 
   const connected = (status && status.configured) || {}
   const nConn = PLATFORMS.filter((p) => connected[p.key]).length
-  // Zen only makes sense over a live site; never let it hide the tab bar on a
-  // tab that has no way to toggle it back off.
+  // Zen only makes sense over a live site, and only on a tab that carries its
+  // own un-zen control (BrowseHub's rail). Radar has no such pill, so zen there
+  // would hide the tab bar with no way back.
   const hideChrome = zen && tab === 'browse'
 
   return h('div', { style: paneStyle },
     !hideChrome && h(Banner, { nConn, total: PLATFORMS.length }),
     !hideChrome && h('div', { style: tabBarStyle },
       h(Tab, { active: tab === 'browse', onClick: () => setTab('browse'), label: 'Browse' }),
+      h(Tab, { active: tab === 'radar', onClick: () => setTab('radar'), label: 'Radar' }),
       h(Tab, { active: tab === 'timeline', onClick: () => setTab('timeline'), label: 'Timeline' }),
       h(Tab, { active: tab === 'inbox', onClick: () => setTab('inbox'), label: 'Inbox' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
@@ -179,6 +181,7 @@ function SocialPane() {
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
     tab === 'browse' ? h(BrowseHub, { zen, setZen, jump })
+      : tab === 'radar' ? h(Radar)
       : tab === 'timeline' ? h(Timeline, { status, openInBrowse })
       : tab === 'inbox' ? h(Inbox, { status })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus, openInBrowse })
@@ -1174,6 +1177,104 @@ const SITE_INTENT = {
   youtube: () => 'https://studio.youtube.com/',
   hn: () => 'https://news.ycombinator.com/submit',
 }
+// ── Radar: one keyword, every platform, sorted newest-first ───────────────────
+// Each entry is the site's REAL search URL. No API keys, no rate limits, no
+// tier gates — it's the same page you'd get typing into their search box, so it
+// works on platforms whose APIs are paywalled (X) or dead to anon reads (Reddit).
+// Where the platform supports it we force recency sort; algorithmic "top"
+// results are worthless for monitoring.
+const SITE_SEARCH = {
+  x: (q) => 'https://x.com/search?f=live&q=' + encodeURIComponent(q),
+  reddit: (q) => 'https://www.reddit.com/search/?sort=new&q=' + encodeURIComponent(q),
+  bluesky: (q) => 'https://bsky.app/search?q=' + encodeURIComponent(q),
+  youtube: (q) => 'https://www.youtube.com/results?sp=CAI%253D&search_query=' + encodeURIComponent(q),
+  linkedin: (q) => 'https://www.linkedin.com/search/results/content/?sortBy=%22date_posted%22&keywords=' + encodeURIComponent(q),
+  facebook: (q) => 'https://www.facebook.com/search/posts?q=' + encodeURIComponent(q),
+  instagram: (q) => 'https://www.instagram.com/explore/tags/' + encodeURIComponent(q.replace(/[^a-z0-9]/gi, '').toLowerCase()) + '/',
+  tiktok: (q) => 'https://www.tiktok.com/search?q=' + encodeURIComponent(q),
+  threads: (q) => 'https://www.threads.com/search?q=' + encodeURIComponent(q),
+  mastodon: (q) => 'https://fosstodon.org/search?q=' + encodeURIComponent(q),
+  twitch: (q) => 'https://www.twitch.tv/search?term=' + encodeURIComponent(q),
+  github: (q) => 'https://github.com/search?s=updated&type=repositories&q=' + encodeURIComponent(q),
+  hn: (q) => 'https://hn.algolia.com/?sortBy=byDate&query=' + encodeURIComponent(q),
+  producthunt: (q) => 'https://www.producthunt.com/search?q=' + encodeURIComponent(q),
+  discord: null, whatsapp: null, telegram: null, slack: null,
+}
+
+// ── Cleaner: strip the engagement machine out of every feed ───────────────────
+// Injected with webview.insertCSS() after dom-ready. This is display-only — we
+// hide their slop, we don't touch their network or their code. Selectors are
+// kept broad-but-anchored (aria-label / data-testid, the attributes these sites
+// need for their own accessibility and tests) so they survive class-name churn.
+const CLEAN_CSS = {
+  facebook: `
+    /* Sponsored posts: FB labels them for a11y — that label is the tell. */
+    div[role="feed"] > div:has(a[aria-label="Sponsored"]),
+    div[role="feed"] > div:has(span[aria-label="Sponsored"]),
+    div[role="article"]:has(a[href*="/ads/about"]),
+    /* Reels + Shorts rails, Stories tray, "Suggested for you", People You May Know */
+    div[role="feed"] > div:has(h2 a[href*="/reel"]),
+    div[role="feed"] > div:has(span:is([aria-label*="Suggested"])),
+    div[aria-label="Stories"], div[data-pagelet="Stories"],
+    div[data-pagelet^="RightRail"], div[data-pagelet="VideoChaining"],
+    /* Right-hand ad rail and the "Complete your profile" nags */
+    div[data-pagelet="LeftRail"] a[href*="/games/"],
+    div[role="complementary"] { display: none !important; }`,
+  x: `
+    /* Promoted tweets carry placementTracking; nothing organic does. */
+    div[data-testid="placementTracking"],
+    article:has(div[data-testid="placementTracking"]),
+    /* Sidebar: trends, who-to-follow, premium upsell, Grok pitch */
+    div[data-testid="sidebarColumn"] aside,
+    div[data-testid="sidebarColumn"] div[aria-label*="Trending"],
+    div[data-testid="sidebarColumn"] div[aria-label*="Who to follow"],
+    div[data-testid="super-upsell-UpsellCardRenderProperties"],
+    a[href="/i/premium_sign_up"], a[href*="/i/grok"] { display: none !important; }`,
+  youtube: `
+    /* Ad slots, masthead ads, the Shorts shelf, and "People also watched". */
+    ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer,
+    ytd-promoted-video-renderer, ytd-display-ad-renderer,
+    #masthead-ad, ytd-statement-banner-renderer,
+    ytd-rich-shelf-renderer[is-shorts], ytd-reel-shelf-renderer,
+    ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+    ytd-merch-shelf-renderer { display: none !important; }`,
+  reddit: `
+    shreddit-ad-post, shreddit-comments-page-ad,
+    [data-testid="post-container"]:has([data-testid="promotedlink"]),
+    shreddit-dynamic-ad-link, shreddit-sidebar-ad,
+    faceplate-tracker[source="nsfw_blocking_modal"],
+    /* "Popular communities" / app-download interstitials */
+    xpromo-app-selector, shreddit-app-selector { display: none !important; }`,
+  instagram: `
+    /* Sponsored posts and the Reels/Suggested rails. */
+    article:has(span:is([aria-label="Sponsored"])),
+    div:has(> span:is([aria-label="Sponsored"])),
+    div[role="menuitem"]:has(svg[aria-label="Reels"]),
+    section:has(> div > div > span:is([aria-label*="Suggested"])) { display: none !important; }`,
+  linkedin: `
+    /* "Promoted" is LinkedIn's own label on every sponsored update. */
+    .feed-shared-update-v2:has(span:is(.update-components-actor__description)):has(span:is([aria-hidden="true"])),
+    div[data-id^="urn:li:activity"]:has(.update-components-header--sponsored),
+    .ad-banner-container, .scaffold-layout__aside .news-module,
+    .premium-upsell-link, .feed-follows-module { display: none !important; }`,
+  tiktok: `
+    div[data-e2e="ad-card"], div:has(> div > div[data-e2e="ad-tag"]),
+    div[class*="DivAdCard"], div[class*="DivDownloadAppCard"] { display: none !important; }`,
+  threads: `
+    div[data-pressable-container]:has(span:is([aria-label="Sponsored"])) { display: none !important; }`,
+  twitch: `
+    div[data-a-target="video-ad-countdown"], div[data-test-selector="sad-overlay"],
+    div[data-a-target="prime-offers-button"] { display: none !important; }`,
+}
+// Every site also gets these: kill cookie-consent walls and "open in app" nags,
+// the two things that waste a click on literally every platform.
+const CLEAN_UNIVERSAL = `
+  div[aria-label*="cookie" i], div[class*="cookie-banner" i],
+  div[id*="cookie-consent" i], div[class*="CookieBanner" i],
+  div[class*="open-in-app" i], div[class*="AppInstall" i],
+  div[class*="smart-banner" i] { display: none !important; }`
+const cleanCssFor = (key) => (CLEAN_CSS[key] || '') + CLEAN_UNIVERSAL
+
 const partitionFor = (key) => 'persist:hermes-social-' + key
 const XSITE_PARTITION = partitionFor('x')
 const XSITE_START = 'https://x.com/home'
@@ -1215,68 +1316,109 @@ function ComposeOnSite({ text, openInBrowse }) {
 
 // The hub. Sites stay MOUNTED once visited (hidden, not unmounted) so switching
 // between X and Reddit keeps both logged in, scrolled and instant.
+// Each mounted webview is its own Chromium renderer process — measured at
+// 100–360MB apiece on this machine. Mounting all 18 would cost multiple GB, so
+// we keep the N most-recently-used guests alive and evict the rest. Evicted
+// sites lose scroll position but NOT their login: the session cookie lives in
+// the persistent partition, not the guest.
+const MAX_LIVE = 4
+
 function BrowseHub({ zen, setZen, jump }) {
   const [active, setActive] = usePref('browse.active', 'x')
-  const [opened, setOpened] = React.useState(() => {
-    // Re-open whatever was mounted last session so switching back is instant.
+  // MRU order: [0] is the most recently used. Mounted set = first MAX_LIVE.
+  const [mru, setMru] = React.useState(() => {
     const prev = loadPref('browse.opened', ['x'])
-    const o = {}
-    for (const k of (Array.isArray(prev) ? prev : ['x'])) if (SITE_BY_KEY[k]) o[k] = null
-    if (!Object.keys(o).length) o.x = null
-    return o
+    const list = (Array.isArray(prev) ? prev : ['x']).filter((k) => SITE_BY_KEY[k])
+    return list.length ? list.slice(0, MAX_LIVE) : ['x']
   })
+  const [overrides, setOverrides] = React.useState({})
   // Split view: a second live site pinned beside the first.
   const [split, setSplit] = usePref('browse.split', null)
 
-  // Compose can hand us a prefilled intent URL to open on a given site.
+  // Promote a site to the front of the MRU list, mounting it if needed.
+  const touch = React.useCallback((key) => {
+    setMru((prev) => {
+      const next = [key, ...prev.filter((k) => k !== key)]
+      // Never evict the split partner — it's visible.
+      const keep = next.slice(0, MAX_LIVE)
+      const sp = loadPref('browse.split', null)
+      if (sp && !keep.includes(sp) && next.includes(sp)) keep[keep.length - 1] = sp
+      return keep
+    })
+  }, [])
+
+  // Compose/Radar can hand us a prefilled intent URL to open on a given site.
   React.useEffect(() => {
     if (!jump || !jump.key) return
     setActive(jump.key)
-    setOpened((o) => ({ ...o, [jump.key]: jump.url || null }))
+    touch(jump.key)
+    if (jump.url) setOverrides((o) => ({ ...o, [jump.key]: jump.url }))
   }, [jump && jump.nonce])
 
-  React.useEffect(() => { savePref('browse.opened', Object.keys(opened)) }, [opened])
+  React.useEffect(() => { savePref('browse.opened', mru) }, [mru])
 
-  const pick = (key) => {
-    setActive(key)
-    setOpened((o) => (key in o ? o : { ...o, [key]: null }))
-  }
+  const pick = (key) => { setActive(key); touch(key) }
   // Right-click / ⌥-click a site to pin it as the split partner.
   const pinSplit = (key) => {
     if (split === key) { setSplit(null); return }
     setSplit(key)
-    setOpened((o) => (key in o ? o : { ...o, [key]: null }))
+    touch(key)
   }
   const close = (key) => {
-    setOpened((o) => { const n = { ...o }; delete n[key]; return n })
+    setMru((prev) => {
+      const next = prev.filter((k) => k !== key)
+      return next.length ? next : ['x']
+    })
     if (split === key) setSplit(null)
     if (active === key) {
-      const rest = Object.keys(opened).filter((k) => k !== key)
+      const rest = mru.filter((k) => k !== key)
       setActive(rest[0] || 'x')
-      if (!rest.length) setOpened({ x: null })
     }
   }
 
-  const railBtn = (s) => h('button', {
-    key: s.key,
-    onClick: (e) => { if (e.altKey || e.metaKey) pinSplit(s.key); else pick(s.key) },
-    onContextMenu: (e) => { e.preventDefault(); pinSplit(s.key) },
-    title: s.label + ' — ⌥click or right-click to pin side-by-side',
-    style: {
-      display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
-      padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
-      background: active === s.key ? 'rgba(127,127,127,0.16)' : 'transparent',
-      border: '1px solid ' + (active === s.key || split === s.key ? s.color : 'var(--ui-stroke-secondary, #2a2f3a)'),
-      color: active === s.key ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
-      fontFamily: MONO, fontSize: '0.58rem', fontWeight: 700,
-      letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
-      opacity: split === s.key && active !== s.key ? 0.9 : 1,
+  // ⌘1–⌘9 jump to the Nth site; ⌘\ toggles split on the last-used partner.
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      if (e.key >= '1' && e.key <= '9') {
+        const s = SITES[Number(e.key) - 1]
+        if (s) { e.preventDefault(); pick(s.key) }
+      } else if (e.key === '\\') {
+        e.preventDefault()
+        const partner = mru.find((k) => k !== active)
+        if (split) setSplit(null)
+        else if (partner) setSplit(partner)
+      }
+    }
+    if (typeof window === 'undefined' || !window.addEventListener) return
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mru, active, split])
+
+  const railBtn = (s, i) => {
+    const live = mru.includes(s.key)
+    return h('button', {
+      key: s.key,
+      onClick: (e) => { if (e.altKey || e.metaKey) pinSplit(s.key); else pick(s.key) },
+      onContextMenu: (e) => { e.preventDefault(); pinSplit(s.key) },
+      title: s.label + (i < 9 ? '  (⌘' + (i + 1) + ')' : '') +
+        ' — ⌥click or right-click to pin side-by-side' + (live ? '' : '  · not loaded yet'),
+      style: {
+        display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+        padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
+        background: active === s.key ? 'rgba(127,127,127,0.16)' : 'transparent',
+        border: '1px solid ' + (active === s.key || split === s.key ? s.color : 'var(--ui-stroke-secondary, #2a2f3a)'),
+        color: active === s.key ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
+        fontFamily: MONO, fontSize: '0.58rem', fontWeight: 700,
+        letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
+        opacity: live || active === s.key ? 1 : 0.62,
+      },
     },
-  },
-    h('span', { style: { color: s.color, fontSize: '0.72rem', lineHeight: 1 } }, s.mark),
-    s.label,
-    split === s.key && h('span', { style: { color: s.color, fontSize: '0.6rem' } }, '◧'),
-  )
+      h('span', { style: { color: s.color, fontSize: '0.72rem', lineHeight: 1 } }, s.mark),
+      s.label,
+      split === s.key && h('span', { style: { color: s.color, fontSize: '0.6rem' } }, '◧'),
+    )
+  }
 
   const pill = (label, on, onClick, title) => h('button', {
     onClick, title,
@@ -1290,8 +1432,8 @@ function BrowseHub({ zen, setZen, jump }) {
     },
   }, label)
 
-  // Panes render for every opened site; only the active (and split) are shown.
-  const panes = Object.keys(opened).map((key) => {
+  // Only MRU-resident sites render a guest; the rest are genuinely unmounted.
+  const panes = mru.map((key) => {
     const shown = key === active || key === split
     const isSplit = !!split && key === split && active !== split
     return h('div', {
@@ -1302,7 +1444,7 @@ function BrowseHub({ zen, setZen, jump }) {
         flex: shown ? 1 : 0,
         borderLeft: isSplit ? '1px solid var(--ui-stroke-secondary, #2a2f3a)' : 'none',
       },
-    }, h(SiteFrame, { site: SITE_BY_KEY[key] || SITE_BY_KEY.x, override: opened[key], onClose: () => close(key) }))
+    }, h(SiteFrame, { site: SITE_BY_KEY[key] || SITE_BY_KEY.x, override: overrides[key], onClose: () => close(key) }))
   })
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
@@ -1313,7 +1455,10 @@ function BrowseHub({ zen, setZen, jump }) {
     } },
       SITES.map(railBtn),
       h('span', { style: { flex: 1, minWidth: 8 } }),
-      split && pill('◧ unsplit', true, () => setSplit(null), 'Close the side-by-side pane'),
+      h('span', { title: mru.length + ' of ' + SITES.length + ' sites loaded — Hermes keeps the ' + MAX_LIVE + ' most recent alive and unloads the rest to save memory. Logins are never lost.',
+        style: { flexShrink: 0, fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-quaternary, #6b7280)', padding: '0 4px' } },
+        mru.length + '/' + MAX_LIVE + ' live'),
+      split && pill('◧ unsplit', true, () => setSplit(null), 'Close the side-by-side pane (⌘\\)'),
       pill(zen ? '⤢ zen on' : '⤢ zen', zen, () => setZen(!zen),
         zen ? 'Show tabs' : 'Full-pane mode — hide the Hermes Social chrome'),
     ),
@@ -1321,8 +1466,90 @@ function BrowseHub({ zen, setZen, jump }) {
   )
 }
 
-// One live site. `override` (an intent URL from Compose) wins over the default.
-function SiteFrame({ site, override, onClose }) {
+// ── Radar ─────────────────────────────────────────────────────────────────────
+// One keyword, fired at every platform's own search page at once, in a live
+// grid. This is the thing no social API can do: X's search API is paywalled,
+// Reddit killed anon JSON, Instagram/TikTok have no public search API at all —
+// but every one of them will render their search page to a logged-in browser.
+// Because these are real logged-in sessions, you see what YOU would see.
+const RADAR_DEFAULT = ['x', 'reddit', 'bluesky', 'linkedin', 'youtube', 'hn']
+
+function Radar() {
+  const [q, setQ] = usePref('radar.q', '')
+  const [draft, setDraft] = React.useState(() => loadPref('radar.q', ''))
+  const [picked, setPicked] = usePref('radar.sites', RADAR_DEFAULT)
+  const [cols, setCols] = usePref('radar.cols', 2)
+  const [nonce, setNonce] = React.useState(0)
+  const searchable = SITES.filter((s) => SITE_SEARCH[s.key])
+  const active = searchable.filter((s) => picked.includes(s.key))
+
+  const run = () => {
+    const t = draft.trim()
+    if (!t) return
+    setQ(t)
+    setNonce((n) => n + 1)
+  }
+  const toggle = (k) => setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+      h('input', {
+        value: draft, onChange: (e) => setDraft(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') run() },
+        placeholder: 'One keyword — searched on every platform at once…',
+        style: { ...fieldStyle, flex: 1 },
+      }),
+      h('button', { onClick: run, disabled: !draft.trim(), style: { ...btnStyle(true, !draft.trim()), padding: '7px 16px' } }, 'Scan'),
+      h('button', {
+        onClick: () => setCols((c) => (c >= 3 ? 1 : c + 1)),
+        title: 'Grid columns',
+        style: { ...platBtn(false), padding: '6px 11px', fontFamily: MONO, fontSize: '0.58rem', letterSpacing: '0.12em', textTransform: 'uppercase' },
+      }, cols + '-up'),
+    ),
+    h('div', { style: { display: 'flex', gap: 5, padding: '0 10px 8px', flexWrap: 'wrap', flexShrink: 0, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+      searchable.map((s) => h('button', {
+        key: s.key, onClick: () => toggle(s.key), title: s.label,
+        style: {
+          display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+          padding: '4px 10px', borderRadius: 999, cursor: 'pointer',
+          background: picked.includes(s.key) ? 'rgba(127,127,127,0.16)' : 'transparent',
+          border: '1px solid ' + (picked.includes(s.key) ? s.color : 'var(--ui-stroke-secondary, #2a2f3a)'),
+          color: picked.includes(s.key) ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
+          fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
+          letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
+        },
+      }, h('span', { style: { color: s.color, fontSize: '0.7rem', lineHeight: 1 } }, s.mark), s.label)),
+    ),
+    !q
+      ? h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 } },
+          h('div', { style: { maxWidth: 460, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10 } },
+            h('div', { style: { fontFamily: MONO, fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--ui-text-secondary, #b6bccb)' } }, 'Radar'),
+            h('div', { style: { fontSize: 13, lineHeight: 1.6, color: 'var(--ui-text-tertiary, #8b93a7)' } },
+              'Type a brand, a competitor, or a topic. Hermes opens every platform\u2019s own search — sorted newest-first where they allow it — side by side, in your logged-in sessions.'),
+            h('div', { style: { fontSize: 11.5, lineHeight: 1.6, color: 'var(--ui-text-quaternary, #6b7280)' } },
+              'No API keys. No rate limits. Reaches what the APIs charge for or block outright.'),
+          ))
+      : h('div', {
+          style: {
+            flex: 1, minHeight: 0, overflow: 'auto', display: 'grid', gap: 8, padding: 8,
+            gridTemplateColumns: 'repeat(' + cols + ', minmax(0, 1fr))',
+            gridAutoRows: cols === 1 ? 'minmax(520px, 1fr)' : 'minmax(460px, 1fr)',
+          },
+        },
+          active.length === 0
+            ? h('div', { style: secBodyStyle }, 'Pick at least one platform above.')
+            : active.map((s) => h('div', {
+                key: s.key + ':' + nonce,
+                style: { minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, overflow: 'hidden' },
+              }, h(SiteFrame, { site: s, override: SITE_SEARCH[s.key](q), compact: true })))
+        )
+  )
+}
+
+
+// One live site. `override` (an intent URL from Compose/Radar) wins over the
+// default. `compact` trims the chrome for Radar's grid tiles.
+function SiteFrame({ site, override, onClose, compact }) {
   const start = override || site.url
   const wv = React.useRef(null)
   const [url, setUrl] = React.useState(start)
@@ -1331,6 +1558,9 @@ function SiteFrame({ site, override, onClose }) {
   const [err, setErr] = React.useState(null)
   // Zoom is per-site and persisted: X at 90% fits far more timeline on screen.
   const [zoom, setZoom] = usePref('zoom.' + site.key, 1)
+  // Cleaner is per-site and persisted, default ON.
+  const [clean, setClean] = usePref('clean.' + site.key, true)
+  const cleanKey = React.useRef(null)
 
   // webviews are created by the Electron webview-tag machinery, not React's
   // reconciler, so we wire their events imperatively once the node exists.
@@ -1417,6 +1647,29 @@ function SiteFrame({ site, override, onClose }) {
   React.useEffect(() => { applyZoom(zoom) }, [zoom, applyZoom, loading])
   const bumpZoom = (d) => setZoom((z) => Math.min(2, Math.max(0.5, Math.round((z + d) * 100) / 100)))
 
+  // Cleaner. insertCSS returns a key we keep so toggling OFF can remove exactly
+  // what we added. SPAs re-render constantly but injected CSS is document-level,
+  // so one injection per navigation covers every subsequent virtual-DOM update.
+  const applyClean = React.useCallback((on) => {
+    const el = wv.current
+    if (!el || typeof el.insertCSS !== 'function') return
+    if (!on) {
+      if (cleanKey.current && typeof el.removeInsertedCSS === 'function') {
+        el.removeInsertedCSS(cleanKey.current).catch(() => {})
+        cleanKey.current = null
+      }
+      return
+    }
+    const css = cleanCssFor(site.key)
+    if (!css.trim()) return
+    Promise.resolve(el.insertCSS(css)).then((k) => { cleanKey.current = k }).catch(() => {})
+  }, [site.key])
+  // Re-inject on every completed navigation: a full page load drops prior CSS.
+  React.useEffect(() => {
+    if (loading) { cleanKey.current = null; return }
+    applyClean(clean)
+  }, [clean, loading, applyClean])
+
   const btn = (label, onClick, disabled, primary) => h('button', {
     onClick, disabled: !!disabled, title: label,
     style: {
@@ -1430,20 +1683,37 @@ function SiteFrame({ site, override, onClose }) {
   }, label)
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
-    h('div', { style: { display: 'flex', gap: 5, padding: '6px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexShrink: 0 } },
+    h('div', { style: { display: 'flex', gap: 5, padding: compact ? '4px 7px' : '6px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexShrink: 0 } },
       h('span', { title: site.label, style: { color: site.color, fontFamily: MONO, fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, lineHeight: 1 } }, site.mark),
-      btn('‹', back, !nav.canGoBack),
-      btn('›', fwd, !nav.canGoForward),
-      btn('⌂', home, false),
-      h('input', {
-        value: url, onChange: (e) => setUrl(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') go() },
-        placeholder: site.url,
-        style: { ...fieldStyle, flex: 1, minWidth: 80, padding: '5px 9px' },
-      }),
-      btn('Go', () => go(), false, true),
+      !compact && btn('‹', back, !nav.canGoBack),
+      !compact && btn('›', fwd, !nav.canGoForward),
+      !compact && btn('⌂', home, false),
+      compact
+        ? h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: '0.55rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ui-text-secondary, #b6bccb)' } }, site.label)
+        : h('input', {
+            value: url, onChange: (e) => setUrl(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') go() },
+            placeholder: site.url,
+            style: { ...fieldStyle, flex: 1, minWidth: 80, padding: '5px 9px' },
+          }),
+      !compact && btn('Go', () => go(), false, true),
       btn('↻', reload, false),
-      btn('−', () => bumpZoom(-0.1), zoom <= 0.5),
-      h('button', {
+      // Cleaner: the whole point of the plugin. Off = raw, ads and all.
+      CLEAN_CSS[site.key] && h('button', {
+        onClick: () => setClean((c) => !c),
+        title: clean
+          ? 'Cleaner ON — ads, Reels, Stories and upsells hidden. Click for the raw feed.'
+          : 'Cleaner OFF — showing the raw feed. Click to strip the slop.',
+        style: {
+          background: clean ? 'rgba(34,197,94,0.16)' : 'rgba(127,127,127,0.10)',
+          color: clean ? '#22c55e' : 'var(--ui-text-tertiary, #8b93a7)',
+          border: '1px solid ' + (clean ? 'rgba(34,197,94,0.45)' : 'var(--ui-stroke-secondary, #2a2f3a)'),
+          borderRadius: 6, padding: '4px 8px', cursor: 'pointer', flexShrink: 0,
+          fontFamily: MONO, fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.12em',
+          textTransform: 'uppercase', lineHeight: 1,
+        },
+      }, clean ? '✦ clean' : '✦ raw'),
+      !compact && btn('−', () => bumpZoom(-0.1), zoom <= 0.5),
+      !compact && h('button', {
         onClick: () => setZoom(1), title: 'Reset zoom to 100%',
         style: {
           background: 'transparent', border: 'none', cursor: 'pointer', flexShrink: 0,
@@ -1451,7 +1721,7 @@ function SiteFrame({ site, override, onClose }) {
           fontSize: '0.55rem', letterSpacing: '0.08em', padding: '4px 2px', minWidth: 34,
         },
       }, Math.round(zoom * 100) + '%'),
-      btn('+', () => bumpZoom(0.1), zoom >= 2),
+      !compact && btn('+', () => bumpZoom(0.1), zoom >= 2),
       btn('↗', openOut, false),
       onClose && btn('✕', onClose, false),
       loading && h('span', { style: { fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)', flexShrink: 0 } }, '…'),
@@ -1516,7 +1786,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, SITES, SITE_INTENT }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE }
 
 export default {
   id: ID,
