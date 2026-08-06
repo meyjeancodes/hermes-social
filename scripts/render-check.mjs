@@ -16,8 +16,8 @@ plugin.register({ register: (c) => { pane = c; return c } })
 if (!pane) throw new Error('register() did not yield a contribution')
 console.log('contribution:', pane.id, pane.area, JSON.stringify(pane.data))
 
-// Sources folded into Settings, so the top-level tab is gone.
-const tabs = ['Timeline', 'Inbox', 'Feeds', 'Compose', 'Mass Post', 'Settings']
+// Sources folded into Settings; Browse (live sites) is now the default tab.
+const tabs = ['Browse', 'Timeline', 'Inbox', 'Compose', 'Mass Post', 'Settings']
 const html = renderToString(pane.render())
 for (const t of tabs) {
   if (!html.includes(t)) throw new Error('tab missing from render: ' + t)
@@ -44,7 +44,7 @@ console.log('no undefined design tokens, no --ui-bg-* pane fills')
 // useState (the tab) returns each tab key in turn. Catches TDZ/hook errors in
 // Timeline / Inbox / Settings that the default view would never hit.
 const realUseState = React.useState
-for (const key of ['timeline', 'inbox', 'feeds', 'compose', 'mass', 'settings']) {
+for (const key of ['browse', 'timeline', 'inbox', 'compose', 'mass', 'settings']) {
   let first = true
   React.useState = function (init) {
     if (first) { first = false; return realUseState(key) }

@@ -12,6 +12,44 @@ const ID = 'hermes-social'
 const h = React.createElement
 const API = 'http://127.0.0.1:8731'
 
+// ── persistence ───────────────────────────────────────────────────────────────
+// ctx.storage is namespaced to this plugin and survives restarts. We capture the
+// ctx handed to register() so components (which never see ctx) can still use it,
+// and fall back to localStorage when the plugin is loaded by a test harness.
+let PCTX = null
+const SKEY = 'hermes-social:'
+function loadPref(key, fallback) {
+  try {
+    if (PCTX && PCTX.storage && typeof PCTX.storage.get === 'function') {
+      const v = PCTX.storage.get(key)
+      if (v !== undefined && v !== null) return v
+    }
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(SKEY + key)
+      if (raw != null) return JSON.parse(raw)
+    }
+  } catch { /* storage unavailable — use the default */ }
+  return fallback
+}
+function savePref(key, value) {
+  try {
+    if (PCTX && PCTX.storage && typeof PCTX.storage.set === 'function') PCTX.storage.set(key, value)
+    if (typeof localStorage !== 'undefined') localStorage.setItem(SKEY + key, JSON.stringify(value))
+  } catch { /* non-fatal: the pane still works, it just forgets */ }
+}
+// State that should survive a reload: writes on every change, reads once at mount.
+function usePref(key, fallback) {
+  const [v, setV] = React.useState(() => loadPref(key, fallback))
+  const set = React.useCallback((next) => {
+    setV((prev) => {
+      const val = typeof next === 'function' ? next(prev) : next
+      savePref(key, val)
+      return val
+    })
+  }, [key])
+  return [v, set]
+}
+
 // X free-tier workaround: the API can't read timelines or post without a paid
 // plan, so we route to the real X site instead. The share intent prefills the
 // draft text — one click and the user posts on x.com itself.
@@ -99,9 +137,17 @@ function Banner({ nConn, total }) {
 }
 
 function SocialPane() {
-  const [tab, setTab] = React.useState('timeline')
+  const [tab, setTab] = usePref('tab', 'browse')
   const [status, setStatus] = React.useState(null)
   const [err, setErr] = React.useState(null)
+  // Zen hides the wordmark + tab bar so a live site gets the entire pane.
+  const [zen, setZen] = usePref('zen', false)
+  // Compose asks the hub to open a prefilled intent URL: {key, url, nonce}.
+  const [jump, setJump] = React.useState(null)
+  const openInBrowse = React.useCallback((key, url) => {
+    setJump({ key, url, nonce: Date.now() })
+    setTab('browse')
+  }, [])
 
   const loadStatus = React.useCallback(() => {
     fetch(API + '/status').then((r) => r.json()).then((d) => { setStatus(d); setErr(null) })
@@ -111,10 +157,14 @@ function SocialPane() {
 
   const connected = (status && status.configured) || {}
   const nConn = PLATFORMS.filter((p) => connected[p.key]).length
+  // Zen only makes sense over a live site; never let it hide the tab bar on a
+  // tab that has no way to toggle it back off.
+  const hideChrome = zen && tab === 'browse'
 
   return h('div', { style: paneStyle },
-    h(Banner, { nConn, total: PLATFORMS.length }),
-    h('div', { style: tabBarStyle },
+    !hideChrome && h(Banner, { nConn, total: PLATFORMS.length }),
+    !hideChrome && h('div', { style: tabBarStyle },
+      h(Tab, { active: tab === 'browse', onClick: () => setTab('browse'), label: 'Browse' }),
       h(Tab, { active: tab === 'timeline', onClick: () => setTab('timeline'), label: 'Timeline' }),
       h(Tab, { active: tab === 'inbox', onClick: () => setTab('inbox'), label: 'Inbox' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
@@ -128,9 +178,10 @@ function SocialPane() {
       )
     ),
     err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    tab === 'timeline' ? h(Timeline, { status })
+    tab === 'browse' ? h(BrowseHub, { zen, setZen, jump })
+      : tab === 'timeline' ? h(Timeline, { status, openInBrowse })
       : tab === 'inbox' ? h(Inbox, { status })
-      : tab === 'compose' ? h(Compose, { status, refresh: loadStatus })
+      : tab === 'compose' ? h(Compose, { status, refresh: loadStatus, openInBrowse })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
       : h(SettingsHub, { status, refresh: loadStatus })
   )
@@ -213,7 +264,7 @@ function PlatformCard({ p, connected, refresh }) {
 }
 
 // ── Compose ────────────────────────────────────────────────────────────────────
-function Compose({ status, refresh }) {
+function Compose({ status, refresh, openInBrowse }) {
   const [platform, setPlatform] = React.useState('x')
   const [text, setText] = React.useState('')
   const [sub, setSub] = React.useState('')
@@ -263,6 +314,7 @@ function Compose({ status, refresh }) {
       platform === 'x' && h('a', { href: xIntent(text), target: '_blank', rel: 'noreferrer', style: { ...btnStyle(true), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }, title: 'Open X composer with this text prefilled' }, 'Open composer ↗'),
       text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? '#f87171' : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
     ),
+    h(ComposeOnSite, { text, openInBrowse }),
     result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)', color: result.ok ? '#22c55e' : '#f87171', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
   )
 }
@@ -393,9 +445,8 @@ function useStream(path) {
   return { data, loading, err, load }
 }
 
-function Timeline({ status }) {
+function Timeline({ status, openInBrowse }) {
   const { data, loading, err, load } = useStream('/timeline')
-  const [q, setQ] = React.useState('')
   const [only, setOnly] = React.useState({})
   const [auto, setAuto] = React.useState(false)
   // Pending items are held back so a background refresh never yanks the
@@ -409,10 +460,9 @@ function Timeline({ status }) {
   const qsFor = React.useCallback((n) => {
     const sel = Object.keys(only).filter((k) => only[k])
     const p = ['per=' + n, 'limit=' + n * 6]
-    if (q.trim()) p.push('q=' + encodeURIComponent(q.trim()))
     if (sel.length) p.push('sources=' + sel.join(','))
     return p.join('&')
-  }, [q, only])
+  }, [only])
 
   const qs = React.useCallback(() => qsFor(per), [qsFor, per])
 
@@ -486,10 +536,6 @@ function Timeline({ status }) {
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' } },
     h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
-      h('input', { placeholder: 'Search the whole timeline…', value: q,
-        onChange: (e) => setQ(e.target.value),
-        onKeyDown: (e) => { if (e.key === 'Enter') reload() },
-        style: { ...fieldStyle, flex: 1 } }),
       h('button', { onClick: reload, disabled: loading, style: platBtn(false) }, loading ? '↻…' : '↻'),
       h('button', { onClick: () => setAuto((a) => !a), title: 'check for new posts every 60s', style: platBtn(auto) }, auto ? '⏱ on' : '⏱ off'),
     ),
@@ -513,10 +559,10 @@ function Timeline({ status }) {
       onlyX
         ? h(XBrowser, { initialUrl: 'https://x.com/home' })
         : [
-            loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
-            !loading && items.length === 0 && h('div', { style: secBodyStyle }, q ? 'no matches' : 'nothing yet'),
-            items.map((it) => h(StreamItem, { key: it.source + it.id, it })),
-            items.length > 0 && h('div', { style: {
+            loading && items.length === 0 && h('div', { key: 'ld', style: secBodyStyle }, 'loading…'),
+            !loading && items.length === 0 && h('div', { key: 'mt', style: secBodyStyle }, 'nothing yet'),
+            items.map((it) => h(StreamItem, { key: it.source + it.id, it, openInBrowse })),
+            items.length > 0 && h('div', { key: 'end', style: {
               padding: '10px 0 4px', textAlign: 'center', fontFamily: MONO,
               fontSize: '0.5rem', letterSpacing: '0.16em', textTransform: 'uppercase',
               color: 'var(--ui-text-tertiary, #8b93a7)',
@@ -628,7 +674,7 @@ function VideoEmbed({ video, url }) {
   return null
 }
 
-function StreamItem({ it }) {
+function StreamItem({ it, openInBrowse }) {
   const body = it.text || ''
   const heading = it.title && it.title !== it.text ? it.title : ''
   const display = it.source === 'bluesky' || it.source === 'mastodon' ? (it.title || it.author) : ''
@@ -655,8 +701,19 @@ function StreamItem({ it }) {
         h('div', { style: { marginTop: 8, display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } },
           it.score != null && h('span', null, '♥ ' + it.score),
           it.num_comments != null && h('span', null, '💬 ' + it.num_comments),
+          it.url && openInBrowse && h('button', {
+            onClick: () => openInBrowse(SITE_BY_KEY[it.source] ? it.source : 'x', it.url),
+            title: 'Open this post on the live site inside Hermes',
+            style: {
+              marginLeft: 'auto', background: 'transparent', cursor: 'pointer',
+              border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 999,
+              padding: '2px 9px', color: 'var(--ui-text-secondary, #b6bccb)',
+              fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700,
+              letterSpacing: '0.12em', textTransform: 'uppercase',
+            },
+          }, 'Open here'),
           it.url && h('a', { href: it.url, target: '_blank', rel: 'noreferrer', style: {
-            marginLeft: 'auto', color: 'var(--ui-text-tertiary, #8b93a7)', textDecoration: 'none',
+            marginLeft: openInBrowse ? 0 : 'auto', color: 'var(--ui-text-tertiary, #8b93a7)', textDecoration: 'none',
             fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.12em', textTransform: 'uppercase',
           } }, 'Open ↗'),
         ),
@@ -1070,37 +1127,217 @@ const LIST_FIELDS = [
   { k: 'youtube_channels', label: 'YouTube channels', ph: 'UCxxxxxxxxxxxxxxxxxxxxxx', hint: 'Channel ID (starts with UC), from the channel’s About page.' },
 ]
 
-// ── X Site (full interactive X in a webview) ──────────────────────────────────
+// ── Browse: every social site, live, inside Hermes ────────────────────────────
 // A normal <iframe> to x.com is BLOCKED by X-Frame-Options: DENY, so a
 // read-only embed is the most an iframe can show. To get the FULL interactive
-// site — the thing Marco (@mfranz_on) embedded — we use an
-// Electron <webview> guest. The Hermes chat window sets webviewTag: true
-// (electron/session-windows.cjs) with no CSP webview-src restriction, so a
-// webview is a real top-level navigation that ignores X-Frame-Options. We give
-// it a persistent partition so your X login survives reloads (no infinite
-// login loop). Posting/scrolling/DMs all work here, exactly like a browser.
-const XSITE_PARTITION = 'persist:hermes-social-x'
+// site we use an Electron <webview> guest. The Hermes chat window sets
+// webviewTag: true (electron/session-windows.cjs) with no CSP webview-src
+// restriction, so a webview is a real top-level navigation that ignores
+// X-Frame-Options. Each site gets its OWN persistent partition, so logging into
+// X doesn't disturb Reddit and every login survives reloads and restarts.
+// Posting/scrolling/DMs all work here, exactly like a browser.
+const SITES = [
+  { key: 'x', label: 'X', color: '#e5e7eb', url: 'https://x.com/home', mark: '𝕏' },
+  { key: 'reddit', label: 'Reddit', color: '#f97316', url: 'https://www.reddit.com/', mark: 'r/' },
+  { key: 'bluesky', label: 'Bluesky', color: '#3b82f6', url: 'https://bsky.app/', mark: '⧗' },
+  { key: 'instagram', label: 'Instagram', color: '#ec4899', url: 'https://www.instagram.com/', mark: 'ig' },
+  { key: 'facebook', label: 'Facebook', color: '#2563eb', url: 'https://www.facebook.com/', mark: 'f' },
+  { key: 'threads', label: 'Threads', color: '#a3a3a3', url: 'https://www.threads.com/', mark: '@' },
+  { key: 'linkedin', label: 'LinkedIn', color: '#0a66c2', url: 'https://www.linkedin.com/feed/', mark: 'in' },
+  { key: 'youtube', label: 'YouTube', color: '#ef4444', url: 'https://www.youtube.com/', mark: '▶' },
+  { key: 'tiktok', label: 'TikTok', color: '#22d3ee', url: 'https://www.tiktok.com/', mark: '♪' },
+  { key: 'twitch', label: 'Twitch', color: '#a855f7', url: 'https://www.twitch.tv/', mark: '⧉' },
+  { key: 'mastodon', label: 'Mastodon', color: '#8b5cf6', url: 'https://fosstodon.org/home', mark: 'm' },
+  { key: 'discord', label: 'Discord', color: '#5865f2', url: 'https://discord.com/channels/@me', mark: '◈' },
+  { key: 'whatsapp', label: 'WhatsApp', color: '#25d366', url: 'https://web.whatsapp.com/', mark: '✆' },
+  { key: 'telegram', label: 'Telegram', color: '#29a9eb', url: 'https://web.telegram.org/a/', mark: '✈' },
+  { key: 'slack', label: 'Slack', color: '#e01e5a', url: 'https://app.slack.com/client', mark: '#' },
+  { key: 'github', label: 'GitHub', color: '#a3a3a3', url: 'https://github.com/', mark: '⌥' },
+  { key: 'hn', label: 'Hacker News', color: '#fb923c', url: 'https://news.ycombinator.com/', mark: 'Y' },
+  { key: 'producthunt', label: 'Product Hunt', color: '#da552f', url: 'https://www.producthunt.com/', mark: 'P' },
+]
+const SITE_BY_KEY = SITES.reduce((m, s) => { m[s.key] = s; return m }, {})
+// Prefilled compose URLs — one click from the Compose tab to a real post box.
+const SITE_INTENT = {
+  x: (t) => 'https://x.com/intent/tweet?text=' + encodeURIComponent(t || ''),
+  bluesky: (t) => 'https://bsky.app/intent/compose?text=' + encodeURIComponent(t || ''),
+  reddit: (t) => 'https://www.reddit.com/submit?title=' + encodeURIComponent((t || '').slice(0, 280)),
+  linkedin: () => 'https://www.linkedin.com/feed/?shareActive=true',
+  threads: (t) => 'https://www.threads.com/intent/post?text=' + encodeURIComponent(t || ''),
+  mastodon: (t) => 'https://fosstodon.org/share?text=' + encodeURIComponent(t || ''),
+  telegram: () => 'https://web.telegram.org/a/',
+  discord: () => 'https://discord.com/channels/@me',
+  facebook: () => 'https://www.facebook.com/',
+  instagram: () => 'https://www.instagram.com/',
+  tiktok: () => 'https://www.tiktok.com/upload',
+  twitch: () => 'https://www.twitch.tv/',
+  youtube: () => 'https://studio.youtube.com/',
+  hn: () => 'https://news.ycombinator.com/submit',
+}
+const partitionFor = (key) => 'persist:hermes-social-' + key
+const XSITE_PARTITION = partitionFor('x')
 const XSITE_START = 'https://x.com/home'
 // OAuth providers (Apple/Google/Facebook) open their auth page in a popup.
 // The webview's allowpopups is off, so that popup is silently dropped and the
 // login can never finish. We detect those URLs and run the flow in the SAME
 // guest so the session cookie lands in our persistent partition.
 const isAuthPopup = (u) => /accounts\.google\.com|appleid\.apple\.com|facebook\.com|\/oauth\/|authorize|sign[_-]?in|auth\./i.test(u)
-function XBrowser({ initialUrl }) {
-  const start = initialUrl || XSITE_START
+
+// Compose → live site. Takes the draft text and opens the real composer of any
+// site that supports a prefill intent, inside the Browse hub (already logged in).
+function ComposeOnSite({ text, openInBrowse }) {
+  const keys = SITES.filter((s) => SITE_INTENT[s.key]).map((s) => s.key)
+  if (!openInBrowse) return null
+  return h('div', { style: { ...cardShell, display: 'flex', flexDirection: 'column', gap: 8 } },
+    h('div', { style: secTitleStyle }, 'Post on the live site'),
+    h('div', { style: secBodyStyle },
+      'Opens the real composer in Browse with this text prefilled — no API keys, no rate limits.'),
+    h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
+      keys.map((k) => {
+        const s = SITE_BY_KEY[k]
+        return h('button', {
+          key: k,
+          onClick: () => openInBrowse(k, SITE_INTENT[k](text)),
+          title: 'Open ' + s.label + ' composer',
+          style: {
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
+            background: 'transparent', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
+            color: 'var(--ui-text-secondary, #b6bccb)',
+            fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
+            letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
+          },
+        }, h('span', { style: { color: s.color, fontSize: '0.72rem', lineHeight: 1 } }, s.mark), s.label)
+      })
+    )
+  )
+}
+
+// The hub. Sites stay MOUNTED once visited (hidden, not unmounted) so switching
+// between X and Reddit keeps both logged in, scrolled and instant.
+function BrowseHub({ zen, setZen, jump }) {
+  const [active, setActive] = usePref('browse.active', 'x')
+  const [opened, setOpened] = React.useState(() => {
+    // Re-open whatever was mounted last session so switching back is instant.
+    const prev = loadPref('browse.opened', ['x'])
+    const o = {}
+    for (const k of (Array.isArray(prev) ? prev : ['x'])) if (SITE_BY_KEY[k]) o[k] = null
+    if (!Object.keys(o).length) o.x = null
+    return o
+  })
+  // Split view: a second live site pinned beside the first.
+  const [split, setSplit] = usePref('browse.split', null)
+
+  // Compose can hand us a prefilled intent URL to open on a given site.
+  React.useEffect(() => {
+    if (!jump || !jump.key) return
+    setActive(jump.key)
+    setOpened((o) => ({ ...o, [jump.key]: jump.url || null }))
+  }, [jump && jump.nonce])
+
+  React.useEffect(() => { savePref('browse.opened', Object.keys(opened)) }, [opened])
+
+  const pick = (key) => {
+    setActive(key)
+    setOpened((o) => (key in o ? o : { ...o, [key]: null }))
+  }
+  // Right-click / ⌥-click a site to pin it as the split partner.
+  const pinSplit = (key) => {
+    if (split === key) { setSplit(null); return }
+    setSplit(key)
+    setOpened((o) => (key in o ? o : { ...o, [key]: null }))
+  }
+  const close = (key) => {
+    setOpened((o) => { const n = { ...o }; delete n[key]; return n })
+    if (split === key) setSplit(null)
+    if (active === key) {
+      const rest = Object.keys(opened).filter((k) => k !== key)
+      setActive(rest[0] || 'x')
+      if (!rest.length) setOpened({ x: null })
+    }
+  }
+
+  const railBtn = (s) => h('button', {
+    key: s.key,
+    onClick: (e) => { if (e.altKey || e.metaKey) pinSplit(s.key); else pick(s.key) },
+    onContextMenu: (e) => { e.preventDefault(); pinSplit(s.key) },
+    title: s.label + ' — ⌥click or right-click to pin side-by-side',
+    style: {
+      display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+      padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
+      background: active === s.key ? 'rgba(127,127,127,0.16)' : 'transparent',
+      border: '1px solid ' + (active === s.key || split === s.key ? s.color : 'var(--ui-stroke-secondary, #2a2f3a)'),
+      color: active === s.key ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
+      fontFamily: MONO, fontSize: '0.58rem', fontWeight: 700,
+      letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
+      opacity: split === s.key && active !== s.key ? 0.9 : 1,
+    },
+  },
+    h('span', { style: { color: s.color, fontSize: '0.72rem', lineHeight: 1 } }, s.mark),
+    s.label,
+    split === s.key && h('span', { style: { color: s.color, fontSize: '0.6rem' } }, '◧'),
+  )
+
+  const pill = (label, on, onClick, title) => h('button', {
+    onClick, title,
+    style: {
+      flexShrink: 0, padding: '5px 10px', borderRadius: 999, cursor: 'pointer',
+      background: on ? 'var(--ui-blue, #3b82f6)' : 'transparent',
+      color: on ? '#fff' : 'var(--ui-text-tertiary, #8b93a7)',
+      border: '1px solid ' + (on ? 'transparent' : 'var(--ui-stroke-secondary, #2a2f3a)'),
+      fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
+      letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
+    },
+  }, label)
+
+  // Panes render for every opened site; only the active (and split) are shown.
+  const panes = Object.keys(opened).map((key) => {
+    const shown = key === active || key === split
+    const isSplit = !!split && key === split && active !== split
+    return h('div', {
+      key,
+      style: {
+        minHeight: 0, minWidth: 0,
+        display: shown ? 'flex' : 'none', flexDirection: 'column',
+        flex: shown ? 1 : 0,
+        borderLeft: isSplit ? '1px solid var(--ui-stroke-secondary, #2a2f3a)' : 'none',
+      },
+    }, h(SiteFrame, { site: SITE_BY_KEY[key] || SITE_BY_KEY.x, override: opened[key], onClose: () => close(key) }))
+  })
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
+    h('div', { style: {
+      display: 'flex', gap: 5, padding: '7px 10px', alignItems: 'center', flexShrink: 0,
+      overflowX: 'auto', scrollbarWidth: 'none',
+      borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)',
+    } },
+      SITES.map(railBtn),
+      h('span', { style: { flex: 1, minWidth: 8 } }),
+      split && pill('◧ unsplit', true, () => setSplit(null), 'Close the side-by-side pane'),
+      pill(zen ? '⤢ zen on' : '⤢ zen', zen, () => setZen(!zen),
+        zen ? 'Show tabs' : 'Full-pane mode — hide the Hermes Social chrome'),
+    ),
+    h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row' } }, panes)
+  )
+}
+
+// One live site. `override` (an intent URL from Compose) wins over the default.
+function SiteFrame({ site, override, onClose }) {
+  const start = override || site.url
   const wv = React.useRef(null)
   const [url, setUrl] = React.useState(start)
   const [nav, setNav] = React.useState({ canGoBack: false, canGoForward: false })
   const [loading, setLoading] = React.useState(true)
-  const [domReady, setDomReady] = React.useState(false)
   const [err, setErr] = React.useState(null)
+  // Zoom is per-site and persisted: X at 90% fits far more timeline on screen.
+  const [zoom, setZoom] = usePref('zoom.' + site.key, 1)
 
   // webviews are created by the Electron webview-tag machinery, not React's
   // reconciler, so we wire their events imperatively once the node exists.
   React.useEffect(() => {
     const el = wv.current
     if (!el) return
-    const onDom = () => { setDomReady(true); setLoading(true) }
+    const onDom = () => { setLoading(true) }
     const onLoad = () => { setLoading(false) }
     const onFail = (e) => {
       setLoading(false)
@@ -1108,8 +1345,8 @@ function XBrowser({ initialUrl }) {
       const desc = e && (e.errorDescription || (e.details && e.details.errorDescription) || '')
       // ERR_ABORTED (-3) fires on normal in-page navigation; ignore it.
       if (code === -3) return
-      setErr('x.com failed to load: ' + (desc || ('code ' + code)) +
-        '. If you are offline or behind a corporate proxy, the webview cannot reach X.')
+      setErr(site.label + ' failed to load: ' + (desc || ('code ' + code)) +
+        '. If you are offline or behind a proxy, the webview cannot reach it.')
     }
     const onNav = (e) => { if (e && e.url) setUrl(e.url) }
     const onCanGo = (e) => { setNav({ canGoBack: !!(e && e.canGoBack), canGoForward: !!(e && e.canGoForward) }) }
@@ -1145,6 +1382,16 @@ function XBrowser({ initialUrl }) {
     }
   }, [])
 
+  // A later Compose jump to an already-open site navigates the live guest.
+  const lastOverride = React.useRef(override)
+  React.useEffect(() => {
+    if (!override || override === lastOverride.current) return
+    lastOverride.current = override
+    const el = wv.current
+    setUrl(override); setLoading(true); setErr(null)
+    if (el && typeof el.loadURL === 'function') el.loadURL(override)
+  }, [override])
+
   const go = (target) => {
     const el = wv.current
     let u = (target || url || '').trim()
@@ -1154,8 +1401,21 @@ function XBrowser({ initialUrl }) {
     if (el && typeof el.loadURL === 'function') el.loadURL(u)
   }
   const reload = () => { const el = wv.current; if (el && typeof el.reload === 'function') { setLoading(true); el.reload() } }
+  const home = () => go(site.url)
   const back = () => { const el = wv.current; if (el && nav.canGoBack && typeof el.goBack === 'function') el.goBack() }
   const fwd = () => { const el = wv.current; if (el && nav.canGoForward && typeof el.goForward === 'function') el.goForward() }
+  const openOut = () => { if (typeof window !== 'undefined' && window.open) window.open(url, '_blank') }
+
+  // Apply zoom to the guest. setZoomFactor only exists once the guest is
+  // attached, so we also re-apply on every finished load.
+  const applyZoom = React.useCallback((z) => {
+    const el = wv.current
+    if (el && typeof el.setZoomFactor === 'function') {
+      try { el.setZoomFactor(z) } catch { /* guest not attached yet */ }
+    }
+  }, [])
+  React.useEffect(() => { applyZoom(zoom) }, [zoom, applyZoom, loading])
+  const bumpZoom = (d) => setZoom((z) => Math.min(2, Math.max(0.5, Math.round((z + d) * 100) / 100)))
 
   const btn = (label, onClick, disabled, primary) => h('button', {
     onClick, disabled: !!disabled, title: label,
@@ -1165,38 +1425,52 @@ function XBrowser({ initialUrl }) {
       border: '1px solid ' + (primary ? 'transparent' : 'var(--ui-stroke-secondary, #2a2f3a)'),
       borderRadius: 6, padding: '4px 8px', cursor: disabled ? 'default' : 'pointer',
       fontFamily: MONO, fontSize: '0.58rem', fontWeight: 600, letterSpacing: '0.12em',
-      textTransform: 'uppercase', lineHeight: 1, opacity: disabled ? 0.4 : 1,
+      textTransform: 'uppercase', lineHeight: 1, opacity: disabled ? 0.4 : 1, flexShrink: 0,
     },
   }, label)
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
-    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexShrink: 0 } },
+    h('div', { style: { display: 'flex', gap: 5, padding: '6px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexShrink: 0 } },
+      h('span', { title: site.label, style: { color: site.color, fontFamily: MONO, fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, lineHeight: 1 } }, site.mark),
       btn('‹', back, !nav.canGoBack),
       btn('›', fwd, !nav.canGoForward),
+      btn('⌂', home, false),
       h('input', {
         value: url, onChange: (e) => setUrl(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') go() },
-        placeholder: 'https://x.com/...',
-        style: { ...fieldStyle, flex: 1, minWidth: 80 },
+        placeholder: site.url,
+        style: { ...fieldStyle, flex: 1, minWidth: 80, padding: '5px 9px' },
       }),
       btn('Go', () => go(), false, true),
       btn('↻', reload, false),
+      btn('−', () => bumpZoom(-0.1), zoom <= 0.5),
+      h('button', {
+        onClick: () => setZoom(1), title: 'Reset zoom to 100%',
+        style: {
+          background: 'transparent', border: 'none', cursor: 'pointer', flexShrink: 0,
+          color: 'var(--ui-text-tertiary, #8b93a7)', fontFamily: MONO,
+          fontSize: '0.55rem', letterSpacing: '0.08em', padding: '4px 2px', minWidth: 34,
+        },
+      }, Math.round(zoom * 100) + '%'),
+      btn('+', () => bumpZoom(0.1), zoom >= 2),
+      btn('↗', openOut, false),
+      onClose && btn('✕', onClose, false),
+      loading && h('span', { style: { fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)', flexShrink: 0 } }, '…'),
     ),
     err && h('div', { style: { padding: '8px 12px', fontSize: 12, color: '#f87171', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } }, err),
-    loading && h('div', { style: { fontSize: 11, fontFamily: MONO, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)', padding: '4px 12px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } }, 'loading x.com…'),
     h('webview', {
       ref: wv,
       src: start,
-      partition: XSITE_PARTITION,
-      // Sandbox is already true at the window level; allow-scripts keeps the
-      // SPA alive, allow-popups lets "open in new tab" escape to the OS browser.
-      style: { flex: 1, width: '100%', minHeight: 0, border: 'none', background: '#000' },
-      // attrs that Electron reads off the element:
+      partition: partitionFor(site.key),
+      allowpopups: 'true',
+      style: { flex: 1, width: '100%', minHeight: 0, border: 'none', background: '#000', display: 'flex' },
     }),
-    h('div', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)', padding: '4px 10px', borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)', fontFamily: MONO, letterSpacing: '0.08em' } },
-      'Full X inside Hermes — log in once, stays logged in. Not an API feed.'),
   )
 }
 
+// Kept for the Timeline's X-only view and the test harness.
+function XBrowser({ initialUrl }) {
+  return h(SiteFrame, { site: SITE_BY_KEY.x, override: initialUrl && initialUrl !== XSITE_START ? initialUrl : null })
+}
 // ── styles ──────────────────────────────────────────────────────────────────────
 // Colours come from the Hermes design tokens (--ui-*). Earlier this file used
 // --bg/--text/--border/--accent, which are defined NOWHERE in the app's CSS, so
@@ -1242,11 +1516,13 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, SITES, SITE_INTENT }
 
 export default {
   id: ID,
   register(ctx) {
+    // Capture ctx so loadPref/savePref can use the plugin-scoped storage.
+    PCTX = ctx
     return ctx.register({ id: 'pane', area: 'panes', title: 'Social', data: { placement: 'main' }, render: () => h(SocialPane, {}) })
   },
 }
