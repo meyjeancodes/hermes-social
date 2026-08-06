@@ -289,6 +289,7 @@ function SocialPane() {
   // Compose asks the hub to open a prefilled intent URL: {key, url, nonce}.
   const [jump, setJump] = usePref('jump', null)
   const [palette, setPalette] = React.useState(false)
+  const [watchNew, setWatchNew] = React.useState(0)
   const openInBrowse = React.useCallback((key, url) => {
     setJump({ key, url, nonce: Date.now() })
     setTab('browse')
@@ -331,6 +332,7 @@ function SocialPane() {
       h(Tab, { active: tab === 'browse', onClick: () => setTab('browse'), label: 'Browse' }),
       h(Tab, { active: tab === 'radar', onClick: () => setTab('radar'), label: 'Radar' }),
       h(Tab, { active: tab === 'timeline', onClick: () => setTab('timeline'), label: 'Timeline' }),
+      h(Tab, { active: tab === 'watch', onClick: () => { setTab('watch'); setWatchNew(0) }, label: 'Watch' }, watchNew > 0 && watchBadge(watchNew)),
       h(Tab, { active: tab === 'inbox', onClick: () => setTab('inbox'), label: 'Inbox' }),
       h(Tab, { active: tab === 'compose', onClick: () => setTab('compose'), label: 'Compose' }),
       h(Tab, { active: tab === 'mass', onClick: () => setTab('mass'), label: 'Mass Post' }),
@@ -346,6 +348,7 @@ function SocialPane() {
     tab === 'browse' ? h(BrowseHub, { zen, setZen, jump })
       : tab === 'radar' ? h(Radar)
       : tab === 'timeline' ? h(Timeline, { status, openInBrowse })
+      : tab === 'watch' ? h(Watch, { onNewTotal: setWatchNew })
       : tab === 'inbox' ? h(Inbox, { status })
       : tab === 'compose' ? h(Compose, { status, refresh: loadStatus, openInBrowse })
       : tab === 'mass' ? h(MassPost, { status, refresh: loadStatus })
@@ -374,6 +377,7 @@ function CommandPalette({ onClose, setTab, setZen, openInBrowse, goSite }) {
     list.push({ id: 'tab:browse', label: 'Go to Browse', run: () => setTab('browse') })
     list.push({ id: 'tab:radar', label: 'Go to Radar', run: () => setTab('radar') })
     list.push({ id: 'tab:timeline', label: 'Go to Timeline', run: () => setTab('timeline') })
+    list.push({ id: 'tab:watch', label: 'Go to Watch', run: () => setTab('watch') })
     list.push({ id: 'tab:compose', label: 'Go to Compose', run: () => setTab('compose') })
     list.push({ id: 'tab:inbox', label: 'Go to Inbox', run: () => setTab('inbox') })
     list.push({ id: 'tab:settings', label: 'Go to Settings', run: () => setTab('settings') })
@@ -428,7 +432,7 @@ function CommandPalette({ onClose, setTab, setZen, openInBrowse, goSite }) {
   ))
 }
 
-function Tab({ active, onClick, label }) {
+function Tab({ active, onClick, label, badge }) {
   return h('button', { onClick, style: {
     background: active ? 'var(--ui-blue, #3b82f6)' : 'transparent',
     color: active ? '#fff' : 'var(--ui-text-tertiary, #888)',
@@ -436,8 +440,14 @@ function Tab({ active, onClick, label }) {
     borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
     fontFamily: MONO, fontSize: '0.58rem', fontWeight: 600,
     letterSpacing: '0.14em', textTransform: 'uppercase', whiteSpace: 'nowrap', flexShrink: 0,
-  } }, label)
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+  } }, label, badge)
 }
+
+const watchBadge = (n) => h('span', {
+  title: n + ' new watch matches',
+  style: { minWidth: 14, height: 14, padding: '0 4px', borderRadius: 999, background: '#fff', color: 'var(--ui-blue, #3b82f6)', fontFamily: MONO, fontSize: '0.48rem', fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 },
+}, n > 99 ? '99+' : String(n))
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function Settings({ status, refresh }) {
@@ -1769,6 +1779,126 @@ function BrowseHub({ zen, setZen, jump }) {
 // Because these are real logged-in sessions, you see what YOU would see.
 const RADAR_DEFAULT = ['x', 'reddit', 'bluesky', 'linkedin', 'youtube', 'hn']
 
+// ── Watch ─────────────────────────────────────────────────────────────────────
+// Saved keyword monitors over the unified, credential-free timeline. The
+// backend already merges RSS + Reddit + HN + Mastodon + YouTube and supports a
+// server-side `q` filter, so Watch is pure listening: each query polls the
+// filtered stream and watches for items that weren't there on the previous
+// poll. Genuinely-new matches surface as a badge on the tab and on the query —
+// a "new since you looked" counter, not a firehose. Stored locally, no API keys.
+const WATCH_DEFAULT = ['BlackCat Robotics', 'robotics funding']
+
+// One monitor row: polls its query, diffs against the last seen set, shows new.
+function WatchQuery({ term, onRemove, onActivate, onNew }) {
+  const light = useIsLight()
+  const [items, setItems] = React.useState([])
+  const [newIds, setNewIds] = React.useState([]) // ids seen since last "view"
+  const [seen, setSeen] = React.useState(() => new Set())
+  const [err, setErr] = React.useState(null)
+  const lastView = React.useRef(term)
+  const qs = () => 'per=8&limit=40&q=' + encodeURIComponent(term)
+
+  const poll = React.useCallback(() => {
+    fetch(API + '/timeline?' + qs()).then((r) => r.json()).then((d) => {
+      const list = (d.items || []).slice(0, 12)
+      setItems(list)
+      setErr(d.errors && Object.keys(d.errors).length ? 'some sources unavailable' : null)
+      const ids = new Set(list.map((i) => i.source + i.id))
+      // Anything in this poll but not in our seen set is new — but only count
+      // it if we'd already established a baseline (don't badge the first load).
+      if (seen.size) {
+        const fresh = list.filter((i) => !seen.has(i.source + i.id)).map((i) => i.source + i.id)
+        if (fresh.length) setNewIds((prev) => Array.from(new Set([...prev, ...fresh])))
+      }
+      setSeen(ids)
+      if (onNew) onNew(term, newIds.length)
+    }).catch(() => setErr('timeline unreachable'))
+  }, [term])
+
+  React.useEffect(() => { poll() }, [poll])
+  // Poll every 90s. Light enough — 8 sources, cached by the backend.
+  React.useEffect(() => {
+    const t = setInterval(poll, 90000)
+    return () => clearInterval(t)
+  }, [poll])
+
+  const view = () => { setNewIds([]); lastView.current = term; onActivate && onActivate(term) }
+
+  return h('div', { style: { ...cardStyle, display: 'flex', flexDirection: 'column', gap: 8 } },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+      h('div', { style: { fontFamily: MONO, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--ui-text-primary, #e7e9ee)', flex: 1, cursor: 'pointer' }, onClick: view },
+        '◎ ' + term,
+        newIds.length > 0 && h('span', { title: newIds.length + ' new since you looked', style: { marginLeft: 8, minWidth: 15, height: 15, padding: '0 4px', borderRadius: 999, background: 'var(--ui-blue, #3b82f6)', color: '#fff', fontFamily: MONO, fontSize: '0.5rem', fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } }, newIds.length > 99 ? '99+' : String(newIds.length))),
+      h('button', { onClick: () => onRemove(term), title: 'Remove monitor', style: { background: 'transparent', border: 'none', color: 'var(--ui-text-tertiary, #8b93a7)', cursor: 'pointer', fontSize: 13 } }, '✕'),
+    ),
+    h('div', { style: { fontSize: 11.5, color: 'var(--ui-text-tertiary, #8b93a7)' } },
+      items.length + ' recent matches' + (err ? ' · ' + err : '')),
+    items.slice(0, 4).map((it) => {
+      const s = SRC_BY_KEY[it.source]
+      return h('a', {
+        key: it.source + it.id, href: it.url || '#', target: '_blank', rel: 'noreferrer',
+        onClick: view,
+        style: { display: 'flex', gap: 8, alignItems: 'baseline', textDecoration: 'none', color: 'var(--ui-text-secondary, #b6bccb)', fontSize: 12 },
+      },
+        h('span', { style: { color: s ? inkFor(s, light) : 'var(--ui-text-tertiary, #8b93a7)', fontFamily: MONO, fontSize: '0.58rem', flexShrink: 0 } }, (s && s.mark) || it.source),
+        h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+          (it.text || it.title || '').slice(0, 90)),
+        h('span', { style: { color: 'var(--ui-text-quaternary, #6b7280)', fontSize: '0.55rem', flexShrink: 0 } }, ago(it.date)),
+      )
+    }),
+  )
+}
+
+function Watch({ onNewTotal }) {
+  const light = useIsLight()
+  const [terms, setTerms] = usePref('watch.terms', WATCH_DEFAULT)
+  const [draft, setDraft] = React.useState('')
+  const [pulse, setPulse] = React.useState(0)
+
+  // Lift per-query new-counts to the parent so the tab badge reflects the total.
+  const [totalNew, setTotalNew] = React.useState(0)
+  const countsRef = React.useRef({})
+
+  const addTerm = () => {
+    const t = draft.trim()
+    if (!t || terms.includes(t)) return
+    setTerms([...terms, t])
+    setDraft('')
+  }
+  const removeTerm = (t) => {
+    delete countsRef.current[t]
+    setTerms(terms.filter((x) => x !== t))
+    const next = Object.values(countsRef.current).reduce((a, b) => a + b, 0)
+    setTotalNew(next)
+    if (onNewTotal) onNewTotal(next)
+  }
+  const onNew = (term, n) => {
+    countsRef.current[term] = n
+    const next = Object.values(countsRef.current).reduce((a, b) => a + b, 0)
+    setTotalNew(next)
+    if (onNewTotal) onNewTotal(next)
+    setPulse((p) => p + 1)
+  }
+
+  return h('div', { style: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 } },
+    h('div', { style: { display: 'flex', gap: 6, padding: '8px 10px', alignItems: 'center', flexShrink: 0, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
+      h('input', {
+        value: draft, onChange: (e) => setDraft(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') addTerm() },
+        placeholder: 'Watch a keyword across the web…',
+        style: { ...fieldStyle, flex: 1 },
+      }),
+      h('button', { onClick: addTerm, disabled: !draft.trim(), style: { ...btnStyle(true, !draft.trim()), padding: '7px 14px' } }, 'Watch'),
+    ),
+    h('div', { style: { padding: 10, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 } },
+      terms.length === 0
+        ? h('div', { style: { ...secBodyStyle } }, 'Add a keyword to start monitoring the open web — RSS, Reddit, HN, Mastodon and YouTube — for it.')
+        : terms.map((t) => h(WatchQuery, { key: t, term: t, onRemove: removeTerm, onNew })),
+      pulse, // force re-render so the tab badge stays in sync
+    ),
+  )
+}
+
 function Radar() {
   const light = useIsLight()
   const [q, setQ] = usePref('radar.q', '')
@@ -2117,7 +2247,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, SocialPane, CommandPalette, useUnread, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, CommandPalette, useUnread, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
 
 export default {
   id: ID,

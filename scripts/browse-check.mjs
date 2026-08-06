@@ -18,7 +18,7 @@ globalThis.document = globalThis.document || {
 }
 
 const mod = await import('../desktop/plugin.js')
-const { BrowseHub, SiteFrame, ComposeOnSite, Radar, SITES, SITE_INTENT, SITE_SEARCH,
+const { BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, SITES, SITE_INTENT, SITE_SEARCH,
         CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, StreamItem, CommandPalette, useUnread } = mod.__test__
 
 let fail = 0
@@ -192,5 +192,16 @@ console.log('command palette:')
     // query isn't a prop; assert the filter input is present instead
   }))
   ok('has a filter input', filtered.includes('placeholder="Jump to a site'))
+}
+
+// 11. Watch: renders the tab, lists default monitors, polls the backend's
+//     server-side q filter (already verified) and clears the tab badge on view.
+console.log('watch:')
+{
+  const html = renderToString(React.createElement(Watch, {}))
+  ok('renders the monitor input', html.includes('Watch a keyword'))
+  ok('shows both default monitors', html.includes('BlackCat Robotics') && html.includes('robotics funding'))
+  const pane = renderToString(React.createElement(SocialPane))
+  ok('pane renders Watch tab', pane.includes('Watch'))
 }
 process.exit(fail ? 1 : 0)

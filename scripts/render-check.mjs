@@ -48,7 +48,7 @@ console.log('no undefined design tokens, no --ui-bg-* pane fills')
 // useState (the tab) returns each tab key in turn. Catches TDZ/hook errors in
 // Timeline / Inbox / Settings that the default view would never hit.
 const realUseState = React.useState
-for (const key of ['browse', 'radar', 'timeline', 'inbox', 'compose', 'mass', 'settings']) {
+for (const key of ['browse', 'radar', 'timeline', 'watch', 'inbox', 'compose', 'mass', 'settings']) {
   let first = true
   React.useState = function (init) {
     if (first) { first = false; return realUseState(key) }
