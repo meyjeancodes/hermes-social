@@ -4,10 +4,11 @@
   "description": "The ultimate multi-platform social hub that runs **inside the Hermes desktop app**.",
   "main": "index.js",
   "scripts": {
-    "test": "node scripts/render-check.mjs && node scripts/browse-check.mjs && node scripts/theme-check.mjs",
+    "test": "node scripts/render-check.mjs && node scripts/browse-check.mjs && node scripts/theme-check.mjs && node scripts/route-check.mjs",
     "test:render": "node scripts/render-check.mjs",
     "test:browse": "node scripts/browse-check.mjs",
-    "test:theme": "node scripts/theme-check.mjs"
+    "test:theme": "node scripts/theme-check.mjs",
+    "test:route": "node scripts/route-check.mjs"
   },
   "repository": {
     "type": "git",

@@ -78,6 +78,7 @@ Runs three harnesses (`scripts/*.mjs`):
 - `render-check` — deep-renders all 8 tabs to catch hook/TDZ errors `node --check` misses.
 - `browse-check` — all 18 sites get a persistent partition, MRU cap of 4 live webviews, Cleaner injection, Radar-jump regression, and the BrowseHub jump-guard invariant.
 - `theme-check` — WCAG AA contrast for every brand mark + status fill in light and dark, plus a leak check that light mode emits no dark-only literals.
+- `route-check` — every endpoint the pane calls exists on the backend (static cross-check of `social/server.py` + a live probe; performs no real posts).
 
 ## CLI (backend)
 
