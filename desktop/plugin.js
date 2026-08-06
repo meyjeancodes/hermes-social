@@ -108,6 +108,142 @@ function ago(when) {
 // Matches Hermes desktop chrome: --dt-font-mono (JetBrains Mono), uppercase,
 // wide tracking — same treatment the app uses for its own wordmark.
 const MONO = 'var(--dt-font-mono, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace)'
+
+// ── Theme awareness ───────────────────────────────────────────────────────────
+// The desktop app publishes the resolved appearance on the document root:
+//   root.dataset.hermesMode  = 'light' | 'dark'   (already resolves 'system')
+//   root.classList 'dark'    toggled to match
+//   root.style  color-scheme = 'light' | 'dark'
+// Every --ui-* token is derived from --ui-base via color-mix(), so tokens flip
+// on their own. What does NOT flip is any literal hex we ship — brand marks,
+// status colours, and the rgba() tints used for fills. Those are what this
+// layer fixes.
+function readMode() {
+  if (typeof document === 'undefined' || !document.documentElement) return 'dark'
+  const el = document.documentElement
+  const m = el.dataset && el.dataset.hermesMode
+  if (m === 'light' || m === 'dark') return m
+  // Fall back to the class the app toggles, then to the OS preference.
+  if (el.classList && el.classList.contains('dark')) return 'dark'
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  return 'dark'
+}
+
+// Subscribe to theme changes. The app mutates data-hermes-mode / the `dark`
+// class on <html> when the user switches skin or hits Shift+X, so a
+// MutationObserver on that one attribute set is the exact signal — no polling.
+function useThemeMode() {
+  const [mode, setMode] = React.useState(readMode)
+  React.useEffect(() => {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return
+    const el = document.documentElement
+    const sync = () => setMode(readMode())
+    const obs = new MutationObserver(sync)
+    obs.observe(el, { attributes: true, attributeFilter: ['data-hermes-mode', 'class', 'style'] })
+    // 'system' mode follows the OS, which changes without touching the DOM.
+    let mq = null
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      mq = window.matchMedia('(prefers-color-scheme: dark)')
+      if (mq.addEventListener) mq.addEventListener('change', sync)
+    }
+    sync()
+    return () => {
+      obs.disconnect()
+      if (mq && mq.removeEventListener) mq.removeEventListener('change', sync)
+    }
+  }, [])
+  return mode
+}
+const useIsLight = () => useThemeMode() === 'light'
+
+// Brand colours re-tuned for a white surface. Every value here was computed to
+// clear >=4.0:1 contrast on #ffffff while keeping the brand hue; the dark
+// originals sit at 1.2-2.8:1 on light, which is unreadable-to-invisible (X's
+// #e5e7eb is 1.24:1 — literally white on white).
+const LIGHT_INK = {
+  x: '#24292f',        // X is a black-wordmark brand: near-black reads correct
+  reddit: '#d35a05',
+  threads: '#5f5f5f',
+  tiktok: '#0c899d',
+  whatsapp: '#1a9246',
+  telegram: '#1286c2',
+  github: '#24292f',   // GitHub's own light-mode ink
+  hn: '#cc5e04',
+}
+// Status colours: same treatment.
+const OK_C = { dark: '#22c55e', light: '#199246' }
+const ERR_C = { dark: '#f87171', light: '#d61f1f' }
+const WARN_C = { dark: '#f59e0b', light: '#af7007' }
+const okColor = (light) => (light ? OK_C.light : OK_C.dark)
+const errColor = (light) => (light ? ERR_C.light : ERR_C.dark)
+const warnColor = (light) => (light ? WARN_C.light : WARN_C.dark)
+// A site's mark colour for the current mode.
+const inkFor = (site, light) => (light && LIGHT_INK[site.key]) || site.color
+
+// Neutral fills. rgba(127,127,127,a) is mid-grey and technically mode-agnostic,
+// but on white it reads as dirty haze — light mode wants a cooler, weaker tint.
+const tint = (light, a) => (light ? `rgba(15,23,42,${a * 0.55})` : `rgba(127,127,127,${a})`)
+
+// ── Mode-aware CSS variables ──────────────────────────────────────────────────
+// Threading `light` through 30+ call sites would be noisy and easy to miss one.
+// Instead we publish our own scoped variables once, on the pane root, and let
+// the cascade do the work: --hs-ok / --hs-err / --hs-warn / --hs-fill / etc.
+// resolve differently per mode, so every consumer stays a plain string.
+const THEME_STYLE_ID = 'hermes-social-theme-vars'
+const THEME_CSS = `
+[data-hs-mode] {
+  --hs-ok: ${OK_C.dark};
+  --hs-err: ${ERR_C.dark};
+  --hs-warn: ${WARN_C.dark};
+  --hs-ok-bg: rgba(34,197,94,0.15);
+  --hs-err-bg: rgba(248,113,113,0.15);
+  --hs-fill-strong: rgba(127,127,127,0.16);
+  --hs-fill: rgba(127,127,127,0.10);
+  --hs-fill-soft: rgba(127,127,127,0.06);
+  --hs-fill-faint: rgba(127,127,127,0.05);
+  --hs-ok-glow: rgba(34,197,94,0.6);
+  --hs-fill-btn: rgba(128,128,128,0.3);
+}
+[data-hs-mode="light"] {
+  --hs-ok: ${OK_C.light};
+  --hs-err: ${ERR_C.light};
+  --hs-warn: ${WARN_C.light};
+  --hs-ok-bg: rgba(25,146,70,0.13);
+  --hs-err-bg: rgba(214,31,31,0.11);
+  --hs-fill-strong: rgba(15,23,42,0.09);
+  --hs-fill: rgba(15,23,42,0.055);
+  --hs-fill-soft: rgba(15,23,42,0.035);
+  --hs-fill-faint: rgba(15,23,42,0.028);
+  --hs-ok-glow: rgba(25,146,70,0.42);
+  --hs-fill-btn: rgba(15,23,42,0.14);
+}
+/* Webviews paint their own page, but the host element flashes its background
+   before first paint — match the surface so light mode doesn't strobe black. */
+[data-hs-mode="light"] webview { background: #fff; }
+`
+// Injected once per document; harmless if the pane mounts more than once.
+function useThemeVars() {
+  React.useEffect(() => {
+    if (typeof document === 'undefined') return
+    if (document.getElementById(THEME_STYLE_ID)) return
+    const el = document.createElement('style')
+    el.id = THEME_STYLE_ID
+    el.textContent = THEME_CSS
+    document.head.appendChild(el)
+  }, [])
+}
+// Semantic colours, resolved by CSS rather than by JS branching.
+const C_OK = 'var(--hs-ok)'
+const C_ERR = 'var(--hs-err)'
+const C_WARN = 'var(--hs-warn)'
+const C_OK_BG = 'var(--hs-ok-bg)'
+const C_ERR_BG = 'var(--hs-err-bg)'
+const F_STRONG = 'var(--hs-fill-strong)'
+const F_MED = 'var(--hs-fill)'
+const F_SOFT = 'var(--hs-fill-soft)'
+const F_FAINT = 'var(--hs-fill-faint)'
 const JH = { 'Content-Type': 'application/json' }
 
 function Banner({ nConn, total }) {
@@ -137,6 +273,8 @@ function Banner({ nConn, total }) {
 }
 
 function SocialPane() {
+  useThemeVars()
+  const mode = useThemeMode()
   const [tab, setTab] = usePref('tab', 'browse')
   const [status, setStatus] = React.useState(null)
   const [err, setErr] = React.useState(null)
@@ -162,7 +300,7 @@ function SocialPane() {
   // would hide the tab bar with no way back.
   const hideChrome = zen && tab === 'browse'
 
-  return h('div', { style: paneStyle },
+  return h('div', { style: paneStyle, 'data-hs-mode': mode },
     !hideChrome && h(Banner, { nConn, total: PLATFORMS.length }),
     !hideChrome && h('div', { style: tabBarStyle },
       h(Tab, { active: tab === 'browse', onClick: () => setTab('browse'), label: 'Browse' }),
@@ -179,7 +317,7 @@ function SocialPane() {
         )
       )
     ),
-    err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
+    err && h('div', { style: { padding: 10, color: C_ERR, fontSize: 12 } }, err),
     tab === 'browse' ? h(BrowseHub, { zen, setZen, jump })
       : tab === 'radar' ? h(Radar)
       : tab === 'timeline' ? h(Timeline, { status, openInBrowse })
@@ -242,7 +380,7 @@ function PlatformCard({ p, connected, refresh }) {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } },
       h('span', { style: { fontSize: 15, fontWeight: 700 } }, p.label),
       h('span', { style: badgeStyle(connected), fontSize: 10 }, connected ? '● connected' : '○ not set'),
-      testRes && h('span', { style: { fontSize: 11, color: testRes.ok ? '#22c55e' : '#f87171', marginLeft: 'auto' } }, testRes.ok ? '✓ verified' : '✗ failed')
+      testRes && h('span', { style: { fontSize: 11, color: testRes.ok ? C_OK : C_ERR, marginLeft: 'auto' } }, testRes.ok ? '✓ verified' : '✗ failed')
     ),
     p.fields.map((f) =>
       h('div', { key: f.k, style: { marginBottom: 8 } },
@@ -260,9 +398,9 @@ function PlatformCard({ p, connected, refresh }) {
       h('button', { onClick: test, disabled: testing, style: btnStyle(true) }, testing ? 'Testing…' : 'Test'),
       p.fields.some((f) => f.secret) && h('label', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)', display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' } },
         h('input', { type: 'checkbox', checked: show, onChange: (e) => setShow(e.target.checked) }), 'show'),
-      saved && h('span', { style: { fontSize: 11, color: '#22c55e' } }, 'saved')
+      saved && h('span', { style: { fontSize: 11, color: C_OK } }, 'saved')
     ),
-    testRes && !testRes.ok && h('div', { style: { marginTop: 8, fontSize: 12, color: '#f87171', wordBreak: 'break-word' } }, String(testRes.error || 'failed'))
+    testRes && !testRes.ok && h('div', { style: { marginTop: 8, fontSize: 12, color: C_ERR, wordBreak: 'break-word' } }, String(testRes.error || 'failed'))
   )
 }
 
@@ -300,7 +438,7 @@ function Compose({ status, refresh, openInBrowse }) {
     h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
       PLATFORMS.map((p) => h('button', { key: p.key, onClick: () => setPlatform(p.key), style: platBtn(platform === p.key, configured[p.key], disabled && !configured[p.key]) }, p.label))
     ),
-    disabled && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, `⚠ ${platform} not configured — add creds in Settings (and hit Test).`),
+    disabled && h('div', { style: { fontSize: 12, color: C_WARN } }, `⚠ ${platform} not configured — add creds in Settings (and hit Test).`),
     platform === 'reddit' && h('input', { placeholder: 'subreddit (e.g. python)', value: sub, onChange: (e) => setSub(e.target.value), style: fieldStyle }),
     platform === 'reddit' && h('input', { placeholder: 'title', value: title, onChange: (e) => setTitle(e.target.value), style: fieldStyle }),
     platform === 'instagram' && h('input', { placeholder: 'image URL (publicly hosted)', value: imgUrl, onChange: (e) => setImgUrl(e.target.value), style: fieldStyle }),
@@ -315,10 +453,10 @@ function Compose({ status, refresh, openInBrowse }) {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
       h('button', { onClick: send, disabled: busy || disabled || over || !text.trim(), style: btnStyle(false, busy || disabled || over || !text.trim()) }, busy ? 'Sending…' : (platform === 'twitch' ? (twitchAction === 'title' ? 'Update' : 'Send') : 'Post')),
       platform === 'x' && h('a', { href: xIntent(text), target: '_blank', rel: 'noreferrer', style: { ...btnStyle(true), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }, title: 'Open X composer with this text prefilled' }, 'Open composer ↗'),
-      text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? '#f87171' : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
+      text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? C_ERR : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
     ),
     h(ComposeOnSite, { text, openInBrowse }),
-    result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)', color: result.ok ? '#22c55e' : '#f87171', whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
+    result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? C_OK_BG : C_ERR_BG, color: result.ok ? C_OK : C_ERR, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
   )
 }
 
@@ -387,9 +525,9 @@ function MassPost({ status, refresh }) {
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, padding: 12, overflowY: 'auto' } },
     h('textarea', { placeholder: 'One draft — posted to every platform you pick below.', value: text, onChange: (e) => setText(e.target.value), rows: 4, style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' } }),
-    text.length > 0 && h('div', { style: { fontSize: 11, color: over ? '#f87171' : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
+    text.length > 0 && h('div', { style: { fontSize: 11, color: over ? C_ERR : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
     h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Post to:'),
-    allConn.length === 0 && h('div', { style: { fontSize: 12, color: '#f59e0b' } }, 'No platforms connected yet — add creds in Settings (and hit Test).'),
+    allConn.length === 0 && h('div', { style: { fontSize: 12, color: C_WARN } }, 'No platforms connected yet — add creds in Settings (and hit Test).'),
     h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
       allConn.map((k) => h('button', { key: k, onClick: () => toggle(k), style: platBtn(sel[k], true) }, PLATFORMS.find((p) => p.key === k).label))
     ),
@@ -404,7 +542,7 @@ function MassPost({ status, refresh }) {
       h('button', { onClick: schedule, disabled: !text.trim(), style: platBtn(true) }, '🕒 Schedule'),
       h('button', { onClick: () => saveDraft(), disabled: !text.trim(), style: platBtn(false) }, '💾 Save draft'),
       draftId && h('button', { onClick: () => { setDraftId(null); setText(''); setWhen(''); setNote('new draft') }, style: platBtn(false) }, '+ New'),
-      note && h('span', { style: { fontSize: 11, color: '#22c55e' } }, note),
+      note && h('span', { style: { fontSize: 11, color: C_OK } }, note),
     ),
     drafts.length > 0 && h('div', { style: { marginTop: 6 } },
       h('div', { style: secTitleStyle }, 'Drafts & scheduled'),
@@ -422,9 +560,9 @@ function MassPost({ status, refresh }) {
       Object.entries(results).map(([k, v]) =>
         h('div', { key: k, style: { padding: 10, borderRadius: 8, fontSize: 12, background: '#1a1a1a', border: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
           h('div', { style: { fontWeight: 600, marginBottom: 2 } }, PLATFORMS.find((p) => p.key === k) ? PLATFORMS.find((p) => p.key === k).label : k),
-          v.ok && h('div', { style: { color: '#22c55e' } }, '✓ ' + (v.url || v.id || 'Posted')),
+          v.ok && h('div', { style: { color: C_OK } }, '✓ ' + (v.url || v.id || 'Posted')),
           v.ok === false && v.link && h('a', { href: v.link, target: '_blank', rel: 'noreferrer', style: { color: '#60a5fa', textDecoration: 'none' } }, '↗ ' + (v.note || 'Open to post on X')),
-          v.ok === false && !v.link && h('div', { style: { color: '#f87171', wordBreak: 'break-word' } }, '✗ ' + (v.error || 'failed')),
+          v.ok === false && !v.link && h('div', { style: { color: C_ERR, wordBreak: 'break-word' } }, '✗ ' + (v.error || 'failed')),
         )
       )
     )
@@ -433,7 +571,11 @@ function MassPost({ status, refresh }) {
 
 // ── Timeline (unified, searchable, credential-free) ──────────────────────────
 const SRC_LABEL = { bluesky: 'Bluesky', mastodon: 'Mastodon', youtube: 'YouTube', rss: 'RSS', hn: 'HN', reddit: 'Reddit', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', x: 'X' }
+// Timeline source dots. Light variants for the ones that wash out on white.
 const SRC_COLOR = { bluesky: '#3b82f6', mastodon: '#8b5cf6', youtube: '#ef4444', rss: '#f59e0b', hn: '#fb923c', reddit: '#f97316', instagram: '#ec4899', facebook: '#2563eb', twitch: '#a855f7', x: '#e5e7eb' }
+const SRC_COLOR_LIGHT = { rss: '#af7007', hn: '#cc5e04', reddit: '#d35a05', x: '#24292f' }
+const srcColor = (src, light) =>
+  (light && SRC_COLOR_LIGHT[src]) || SRC_COLOR[src] || 'var(--ui-text-tertiary, #8b93a7)'
 
 function useStream(path) {
   const [data, setData] = React.useState(null)
@@ -449,6 +591,7 @@ function useStream(path) {
 }
 
 function Timeline({ status, openInBrowse }) {
+  const light = useIsLight()
   const { data, loading, err, load } = useStream('/timeline')
   const [only, setOnly] = React.useState({})
   const [auto, setAuto] = React.useState(false)
@@ -544,11 +687,11 @@ function Timeline({ status, openInBrowse }) {
     ),
     h('div', { style: { display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
       avail.map((k) => h('button', { key: k, onClick: () => toggle(k),
-        style: { ...platBtn(!!only[k]), borderColor: only[k] ? SRC_COLOR[k] : 'var(--ui-stroke-secondary, #2a2f3a)' } }, SRC_LABEL[k] || k)),
+        style: { ...platBtn(!!only[k]), borderColor: only[k] ? srcColor(k, light) : 'var(--ui-stroke-secondary, #2a2f3a)' } }, SRC_LABEL[k] || k)),
       Object.keys(only).some((k) => only[k]) && h('button', { onClick: () => setOnly({}), style: { ...platBtn(false), marginLeft: 'auto' } }, 'clear'),
     ),
-    err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#f59e0b' } },
+    err && h('div', { style: { padding: 10, color: C_ERR, fontSize: 12 } }, err),
+    Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: C_WARN } },
       Object.entries(errors).map(([k, v]) => (SRC_LABEL[k] || k) + ': ' + v).join('  ·  ')),
     pending.length > 0 && h('button', { onClick: showPending, style: {
       position: 'absolute', top: 96, left: '50%', transform: 'translateX(-50%)', zIndex: 5,
@@ -678,6 +821,7 @@ function VideoEmbed({ video, url }) {
 }
 
 function StreamItem({ it, openInBrowse }) {
+  const light = useIsLight()
   const body = it.text || ''
   const heading = it.title && it.title !== it.text ? it.title : ''
   const display = it.source === 'bluesky' || it.source === 'mastodon' ? (it.title || it.author) : ''
@@ -692,9 +836,9 @@ function StreamItem({ it, openInBrowse }) {
           h('span', { style: { fontSize: 10, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '· ' + ago(it.created_at)),
           h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.48rem', fontWeight: 700,
             letterSpacing: '0.12em', textTransform: 'uppercase', padding: '2px 6px', borderRadius: 4,
-            color: SRC_COLOR[it.source] || 'var(--ui-text-tertiary, #8b93a7)',
-            border: '1px solid ' + (SRC_COLOR[it.source] || 'var(--ui-stroke-secondary, #2a2f3a)') + '55',
-            background: (SRC_COLOR[it.source] || 'var(--ui-text-tertiary, #8b93a7)') + '18' } }, SRC_LABEL[it.source] || it.source),
+            color: srcColor(it.source, light),
+            border: '1px solid ' + srcColor(it.source, light) + (light ? '66' : '55'),
+            background: srcColor(it.source, light) + (light ? '14' : '18') } }, SRC_LABEL[it.source] || it.source),
         ),
         heading && h('div', { style: { fontSize: 13.5, fontWeight: 600, lineHeight: 1.35, marginTop: 4 } }, heading),
         body && h('div', { style: { fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', marginTop: heading ? 3 : 4, overflowWrap: 'anywhere' } }, body.slice(0, 700)),
@@ -819,7 +963,7 @@ function Messages() {
           conv.messages.map((m) => h(Bubble, { key: m.id, m })),
           h('div', { ref: endRef }),
         ),
-        err && h('div', { style: { padding: '6px 12px', color: '#f87171', fontSize: 12 } }, err),
+        err && h('div', { style: { padding: '6px 12px', color: C_ERR, fontSize: 12 } }, err),
         h('div', { style: { display: 'flex', gap: 6, padding: 10, borderTop: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } },
           h('input', { value: draft, placeholder: 'Message ' + (conv.peer_name || 'agent') + '…',
             onChange: (e) => setDraft(e.target.value),
@@ -858,7 +1002,7 @@ function AutoReply({ threads }) {
     } },
       h('span', { style: {
         width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-        background: cfg.enabled ? '#22c55e' : 'var(--ui-text-tertiary, #8b93a7)',
+        background: cfg.enabled ? C_OK : 'var(--ui-text-tertiary, #8b93a7)',
         boxShadow: cfg.enabled ? '0 0 6px #22c55e' : 'none',
       } }),
       h('span', { style: { fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)' } },
@@ -970,20 +1114,20 @@ function NewConversation({ onClose, onDone }) {
         border: '1px solid ' + (addr === p.address ? 'var(--ui-blue, #3b82f6)' : 'var(--ui-stroke-secondary, #2a2f3a)'),
         background: addr === p.address ? 'rgba(59,130,246,0.12)' : 'rgba(128,128,128,0.05)',
       } },
-        h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: '#22c55e', flexShrink: 0 } }),
+        h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: C_OK, flexShrink: 0 } }),
         h('span', { style: { minWidth: 0 } },
           h('div', { style: { fontSize: 12, fontWeight: 700 } }, p.name || p.address),
           h('div', { style: { fontFamily: MONO, fontSize: 9.5, color: 'var(--ui-text-tertiary, #8b93a7)', overflowWrap: 'anywhere' } }, p.address + ' · ' + (p.url || 'no url')),
         ),
-        p.known && h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.45rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#22c55e' } }, 'known'),
+        p.known && h('span', { style: { marginLeft: 'auto', fontFamily: MONO, fontSize: '0.45rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: C_OK } }, 'known'),
       )),
     ),
-    found && !found.running && h('div', { style: { fontSize: 10.5, color: '#f59e0b' } },
+    found && !found.running && h('div', { style: { fontSize: 10.5, color: C_WARN } },
       'Network discovery is off' + (found.error ? ': ' + found.error : '') + '. You can still connect manually below.'),
     h('input', { value: addr, onChange: (e) => setAddr(e.target.value), placeholder: 'Agent address (hx_…)', style: fieldStyle }),
     h('input', { value: url, onChange: (e) => setUrl(e.target.value), placeholder: 'Their URL (http://host:8731)', style: fieldStyle }),
     h('textarea', { value: body, onChange: (e) => setBody(e.target.value), placeholder: 'First message…', rows: 3, style: { ...fieldStyle, resize: 'vertical' } }),
-    err && h('div', { style: { color: '#f87171', fontSize: 12 } }, err),
+    err && h('div', { style: { color: C_ERR, fontSize: 12 } }, err),
     h('div', { style: { display: 'flex', gap: 6 } },
       h('button', { onClick: go, disabled: busy || !addr.trim() || !body.trim(), style: platBtn(true) }, busy ? 'Connecting…' : 'Connect & send'),
       h('button', { onClick: onClose, style: platBtn(false) }, 'Cancel'),
@@ -1002,9 +1146,9 @@ function Engagement() {
       h('span', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Mentions, replies and new followers across connected platforms.'),
       h('button', { onClick: () => load('limit=40'), disabled: loading, style: { ...platBtn(false), marginLeft: 'auto' } }, loading ? '↻…' : '↻ Refresh'),
     ),
-    err && h('div', { style: { padding: 10, color: '#f87171', fontSize: 12 } }, err),
-    data && data.hint && h('div', { style: { padding: 10, fontSize: 12, color: '#f59e0b' } }, '⚠ ' + data.hint),
-    Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: '#f59e0b' } },
+    err && h('div', { style: { padding: 10, color: C_ERR, fontSize: 12 } }, err),
+    data && data.hint && h('div', { style: { padding: 10, fontSize: 12, color: C_WARN } }, '⚠ ' + data.hint),
+    Object.keys(errors).length > 0 && h('div', { style: { padding: '6px 10px', fontSize: 11, color: C_WARN } },
       Object.entries(errors).map(([k, v]) => (SRC_LABEL[k] || k) + ': ' + v).join('  ·  ')),
     h('div', { style: { flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
       loading && items.length === 0 && h('div', { style: secBodyStyle }, 'loading…'),
@@ -1033,7 +1177,7 @@ function Seg({ active, onClick, label }) {
     fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
     letterSpacing: '0.14em', textTransform: 'uppercase',
     color: active ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
-    background: active ? 'rgba(127,127,127,0.14)' : 'transparent',
+    background: active ? F_STRONG : 'transparent',
     border: '1px solid ' + (active ? 'var(--ui-stroke-secondary, #2a2f3a)' : 'transparent'),
   } }, label)
 }
@@ -1042,6 +1186,7 @@ function Seg({ active, onClick, label }) {
 const TOGGLEABLE = ['bluesky', 'mastodon', 'youtube', 'rss', 'hn', 'reddit']
 
 function Sources() {
+  const light = useIsLight()
   const [src, setSrc] = React.useState(null)
   const [saved, setSaved] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
@@ -1066,7 +1211,7 @@ function Sources() {
       h('div', { style: { fontSize: 13, fontWeight: 700, marginBottom: 8 } }, 'Active in Timeline'),
       h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
         TOGGLEABLE.map((k) => h('button', { key: k, onClick: () => toggle(k),
-          style: { ...platBtn(enabled.includes(k)), borderColor: enabled.includes(k) ? SRC_COLOR[k] : 'var(--ui-stroke-secondary, #2a2f3a)' } }, SRC_LABEL[k] || k))
+          style: { ...platBtn(enabled.includes(k)), borderColor: enabled.includes(k) ? srcColor(k, light) : 'var(--ui-stroke-secondary, #2a2f3a)' } }, SRC_LABEL[k] || k))
       )
     ),
     h('div', { style: cardStyle },
@@ -1081,7 +1226,7 @@ function Sources() {
       ),
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
         h('button', { onClick: save, disabled: busy, style: btnStyle(true, busy) }, busy ? 'Saving…' : 'Save sources'),
-        saved && h('span', { style: { fontSize: 11, color: '#22c55e' } }, 'saved — Timeline will use these on next refresh'),
+        saved && h('span', { style: { fontSize: 11, color: C_OK } }, 'saved — Timeline will use these on next refresh'),
       )
     )
   )
@@ -1324,6 +1469,7 @@ function ComposeOnSite({ text, openInBrowse }) {
 const MAX_LIVE = 4
 
 function BrowseHub({ zen, setZen, jump }) {
+  const light = useIsLight()
   const [active, setActive] = usePref('browse.active', 'x')
   // MRU order: [0] is the most recently used. Mounted set = first MAX_LIVE.
   const [mru, setMru] = React.useState(() => {
@@ -1397,6 +1543,7 @@ function BrowseHub({ zen, setZen, jump }) {
 
   const railBtn = (s, i) => {
     const live = mru.includes(s.key)
+    const ink = inkFor(s, light)
     return h('button', {
       key: s.key,
       onClick: (e) => { if (e.altKey || e.metaKey) pinSplit(s.key); else pick(s.key) },
@@ -1406,17 +1553,17 @@ function BrowseHub({ zen, setZen, jump }) {
       style: {
         display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
         padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
-        background: active === s.key ? 'rgba(127,127,127,0.16)' : 'transparent',
-        border: '1px solid ' + (active === s.key || split === s.key ? s.color : 'var(--ui-stroke-secondary, #2a2f3a)'),
+        background: active === s.key ? tint(light, 0.16) : 'transparent',
+        border: '1px solid ' + (active === s.key || split === s.key ? ink : 'var(--ui-stroke-secondary, #2a2f3a)'),
         color: active === s.key ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
         fontFamily: MONO, fontSize: '0.58rem', fontWeight: 700,
         letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
         opacity: live || active === s.key ? 1 : 0.62,
       },
     },
-      h('span', { style: { color: s.color, fontSize: '0.72rem', lineHeight: 1 } }, s.mark),
+      h('span', { style: { color: ink, fontSize: '0.72rem', lineHeight: 1 } }, s.mark),
       s.label,
-      split === s.key && h('span', { style: { color: s.color, fontSize: '0.6rem' } }, '◧'),
+      split === s.key && h('span', { style: { color: ink, fontSize: '0.6rem' } }, '◧'),
     )
   }
 
@@ -1475,6 +1622,7 @@ function BrowseHub({ zen, setZen, jump }) {
 const RADAR_DEFAULT = ['x', 'reddit', 'bluesky', 'linkedin', 'youtube', 'hn']
 
 function Radar() {
+  const light = useIsLight()
   const [q, setQ] = usePref('radar.q', '')
   const [draft, setDraft] = React.useState(() => loadPref('radar.q', ''))
   const [picked, setPicked] = usePref('radar.sites', RADAR_DEFAULT)
@@ -1512,13 +1660,13 @@ function Radar() {
         style: {
           display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
           padding: '4px 10px', borderRadius: 999, cursor: 'pointer',
-          background: picked.includes(s.key) ? 'rgba(127,127,127,0.16)' : 'transparent',
-          border: '1px solid ' + (picked.includes(s.key) ? s.color : 'var(--ui-stroke-secondary, #2a2f3a)'),
+          background: picked.includes(s.key) ? tint(light, 0.16) : 'transparent',
+          border: '1px solid ' + (picked.includes(s.key) ? inkFor(s, light) : 'var(--ui-stroke-secondary, #2a2f3a)'),
           color: picked.includes(s.key) ? 'var(--ui-text-primary, #e7e9ee)' : 'var(--ui-text-tertiary, #8b93a7)',
           fontFamily: MONO, fontSize: '0.55rem', fontWeight: 700,
           letterSpacing: '0.12em', textTransform: 'uppercase', lineHeight: 1.6,
         },
-      }, h('span', { style: { color: s.color, fontSize: '0.7rem', lineHeight: 1 } }, s.mark), s.label)),
+      }, h('span', { style: { color: inkFor(s, light), fontSize: '0.7rem', lineHeight: 1 } }, s.mark), s.label)),
     ),
     !q
       ? h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 } },
@@ -1552,6 +1700,8 @@ function Radar() {
 function SiteFrame({ site, override, onClose, compact }) {
   const start = override || site.url
   const wv = React.useRef(null)
+  const light = useIsLight()
+  const ink = inkFor(site, light)
   const [url, setUrl] = React.useState(start)
   const [nav, setNav] = React.useState({ canGoBack: false, canGoForward: false })
   const [loading, setLoading] = React.useState(true)
@@ -1673,7 +1823,7 @@ function SiteFrame({ site, override, onClose, compact }) {
   const btn = (label, onClick, disabled, primary) => h('button', {
     onClick, disabled: !!disabled, title: label,
     style: {
-      background: primary ? 'var(--ui-blue, #3b82f6)' : 'rgba(127,127,127,0.10)',
+      background: primary ? 'var(--ui-blue, #3b82f6)' : tint(light, 0.10),
       color: primary ? '#fff' : 'var(--ui-text-secondary, #b6bccb)',
       border: '1px solid ' + (primary ? 'transparent' : 'var(--ui-stroke-secondary, #2a2f3a)'),
       borderRadius: 6, padding: '4px 8px', cursor: disabled ? 'default' : 'pointer',
@@ -1684,7 +1834,7 @@ function SiteFrame({ site, override, onClose, compact }) {
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 } },
     h('div', { style: { display: 'flex', gap: 5, padding: compact ? '4px 7px' : '6px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', flexShrink: 0 } },
-      h('span', { title: site.label, style: { color: site.color, fontFamily: MONO, fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, lineHeight: 1 } }, site.mark),
+      h('span', { title: site.label, style: { color: ink, fontFamily: MONO, fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, lineHeight: 1 } }, site.mark),
       !compact && btn('‹', back, !nav.canGoBack),
       !compact && btn('›', fwd, !nav.canGoForward),
       !compact && btn('⌂', home, false),
@@ -1704,9 +1854,13 @@ function SiteFrame({ site, override, onClose, compact }) {
           ? 'Cleaner ON — ads, Reels, Stories and upsells hidden. Click for the raw feed.'
           : 'Cleaner OFF — showing the raw feed. Click to strip the slop.',
         style: {
-          background: clean ? 'rgba(34,197,94,0.16)' : 'rgba(127,127,127,0.10)',
-          color: clean ? '#22c55e' : 'var(--ui-text-tertiary, #8b93a7)',
-          border: '1px solid ' + (clean ? 'rgba(34,197,94,0.45)' : 'var(--ui-stroke-secondary, #2a2f3a)'),
+          background: clean
+            ? (light ? 'rgba(25,146,70,0.12)' : 'rgba(34,197,94,0.16)')
+            : tint(light, 0.10),
+          color: clean ? okColor(light) : 'var(--ui-text-tertiary, #8b93a7)',
+          border: '1px solid ' + (clean
+            ? (light ? 'rgba(25,146,70,0.42)' : 'rgba(34,197,94,0.45)')
+            : 'var(--ui-stroke-secondary, #2a2f3a)'),
           borderRadius: 6, padding: '4px 8px', cursor: 'pointer', flexShrink: 0,
           fontFamily: MONO, fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.12em',
           textTransform: 'uppercase', lineHeight: 1,
@@ -1726,13 +1880,15 @@ function SiteFrame({ site, override, onClose, compact }) {
       onClose && btn('✕', onClose, false),
       loading && h('span', { style: { fontFamily: MONO, fontSize: '0.5rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ui-text-tertiary, #8b93a7)', flexShrink: 0 } }, '…'),
     ),
-    err && h('div', { style: { padding: '8px 12px', fontSize: 12, color: '#f87171', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } }, err),
+    err && h('div', { style: { padding: '8px 12px', fontSize: 12, color: C_ERR, borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)' } }, err),
     h('webview', {
       ref: wv,
       src: start,
       partition: partitionFor(site.key),
       allowpopups: 'true',
-      style: { flex: 1, width: '100%', minHeight: 0, border: 'none', background: '#000', display: 'flex' },
+      // Placeholder shown for the split-second before the guest paints. Black
+      // on a light theme is a jarring flash, so match the surface.
+      style: { flex: 1, width: '100%', minHeight: 0, border: 'none', background: light ? '#fff' : '#000', display: 'flex' },
     }),
   )
 }
@@ -1748,31 +1904,31 @@ function XBrowser({ initialUrl }) {
 // boxes and the invisible banner.
 const paneStyle = { display: 'flex', flexDirection: 'column', height: '100%', color: 'var(--ui-text-primary, #e7e9ee)', fontFamily: 'var(--dt-font-sans, system-ui, sans-serif)' }
 const tabBarStyle = { display: 'flex', gap: 6, padding: '8px 10px', borderBottom: '1px solid var(--ui-stroke-secondary, #2a2f3a)', alignItems: 'center', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' }
-const fieldStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'rgba(127,127,127,0.10)', color: 'var(--ui-text-primary, #e7e9ee)', fontSize: 12.5, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
-const cardStyle = { border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, padding: 12, background: 'rgba(127,127,127,0.06)' }
+const fieldStyle = { padding: '7px 9px', borderRadius: 7, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: F_MED, color: 'var(--ui-text-primary, #e7e9ee)', fontSize: 12.5, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
+const cardStyle = { border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', borderRadius: 10, padding: 12, background: F_SOFT }
 const secTitleStyle = { fontFamily: MONO, fontSize: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--ui-text-tertiary, #8b93a7)', marginBottom: 5 }
 const secBodyStyle = { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' }
-const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', textDecoration: 'none', color: 'var(--ui-text-primary, #e7e9ee)', background: 'rgba(127,127,127,0.06)' }
-const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: 'rgba(127,127,127,0.05)' }
+const feedItemStyle = { display: 'block', padding: 10, borderRadius: 8, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', textDecoration: 'none', color: 'var(--ui-text-primary, #e7e9ee)', background: F_SOFT }
+const cardShell = { padding: '12px 14px', borderRadius: 12, border: '1px solid var(--ui-stroke-secondary, #2a2f3a)', background: F_FAINT }
 
 function dotStyle(on) {
   return {
     width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
-    background: on ? '#22c55e' : 'var(--ui-stroke-secondary, #2a2f3a)',
-    boxShadow: on ? '0 0 6px rgba(34,197,94,0.6)' : 'none',
+    background: on ? C_OK : 'var(--ui-stroke-secondary, #2a2f3a)',
+    boxShadow: on ? '0 0 6px var(--hs-ok-glow)' : 'none',
   }
 }
 function badgeStyle(on, fontSize = 11) {
   return {
     padding: '2px 6px', borderRadius: 6, fontWeight: 600, fontSize,
-    background: on ? 'rgba(34,197,94,0.18)' : 'rgba(120,120,120,0.15)',
-    color: on ? '#22c55e' : 'var(--ui-text-tertiary, #8b93a7)',
+    background: on ? 'var(--hs-ok-bg)' : F_STRONG,
+    color: on ? C_OK : 'var(--ui-text-tertiary, #8b93a7)',
   }
 }
 function btnStyle(primary, disabled) {
   return {
     padding: '8px 16px', borderRadius: 8, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-    background: disabled ? 'var(--ui-stroke-secondary, #2a2f3a)' : primary ? 'var(--ui-blue, #3b82f6)' : 'rgba(128,128,128,0.3)', color: '#fff', fontWeight: 600, fontSize: 13,
+    background: disabled ? 'var(--ui-stroke-secondary, #2a2f3a)' : primary ? 'var(--ui-blue, #3b82f6)' : 'var(--hs-fill-btn)', color: '#fff', fontWeight: 600, fontSize: 13,
   }
 }
 function platBtn(active, configured, dim) {
@@ -1786,7 +1942,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, SocialPane, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
 
 export default {
   id: ID,
