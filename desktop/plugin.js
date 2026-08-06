@@ -1641,8 +1641,11 @@ function BrowseHub({ zen, setZen, jump }) {
   }, [])
 
   // Compose/Radar can hand us a prefilled intent URL to open on a given site.
+  // `jump` is shared with Radar, which uses key:'radar' — ignore those here so
+  // a palette Radar-scan never corrupts the Browse rail (active/touch expect a
+  // real site key; 'radar' would poison the MRU list and ⌘1-9 slots).
   React.useEffect(() => {
-    if (!jump || !jump.key) return
+    if (!jump || !jump.key || !SITE_BY_KEY[jump.key]) return
     setActive(jump.key)
     touch(jump.key)
     if (jump.url) setOverrides((o) => ({ ...o, [jump.key]: jump.url }))
@@ -2258,7 +2261,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, CommandPalette, useUnread, SITES, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, CommandPalette, useUnread, SITES, SITE_BY_KEY, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
 
 export default {
   id: ID,

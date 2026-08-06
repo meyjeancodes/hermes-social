@@ -18,7 +18,7 @@ globalThis.document = globalThis.document || {
 }
 
 const mod = await import('../desktop/plugin.js')
-const { BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, SITES, SITE_INTENT, SITE_SEARCH,
+const { BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, SITES, SITE_BY_KEY, SITE_INTENT, SITE_SEARCH,
         CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, StreamItem, CommandPalette, useUnread } = mod.__test__
 
 let fail = 0
@@ -216,5 +216,14 @@ console.log('radar jump:')
   // And a plain Radar (no jump) still shows the empty-state CTA, not a scan.
   const empty = renderToString(React.createElement(Radar, {}))
   ok('no jump -> empty-state CTA', empty.includes('Radar') && !empty.includes('gridTemplateColumns'))
+}
+// 13. BrowseHub's jump guard must ignore non-site keys (e.g. a persisted Radar
+//     jump {key:'radar'}) — otherwise re-opening Browse would call touch('radar')
+//     and poison the MRU rail / ⌘1-9 slots. The guard relies on SITE_BY_KEY
+//     having no 'radar' entry, so lock that invariant.
+console.log('jump guard:')
+{
+  ok("SITE_BY_KEY has no 'radar' entry (guard dependency)", SITE_BY_KEY['radar'] === undefined)
+  ok("all 18 sites resolve", SITES.every((s) => !!SITE_BY_KEY[s.key]))
 }
 process.exit(fail ? 1 : 0)
