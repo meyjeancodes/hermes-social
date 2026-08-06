@@ -1789,7 +1789,7 @@ const RADAR_DEFAULT = ['x', 'reddit', 'bluesky', 'linkedin', 'youtube', 'hn']
 // filtered stream and watches for items that weren't there on the previous
 // poll. Genuinely-new matches surface as a badge on the tab and on the query —
 // a "new since you looked" counter, not a firehose. Stored locally, no API keys.
-const WATCH_DEFAULT = ['BlackCat Robotics', 'robotics funding']
+const WATCH_DEFAULT = ['robotics', 'AI']
 
 // One monitor row: polls its query, diffs against the last seen set, shows new.
 function WatchQuery({ term, onRemove, onActivate, onNew }) {

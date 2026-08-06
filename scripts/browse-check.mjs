@@ -200,7 +200,7 @@ console.log('watch:')
 {
   const html = renderToString(React.createElement(Watch, {}))
   ok('renders the monitor input', html.includes('Watch a keyword'))
-  ok('shows both default monitors', html.includes('BlackCat Robotics') && html.includes('robotics funding'))
+  ok('shows both default monitors', html.includes('robotics') && html.includes('AI'))
   const pane = renderToString(React.createElement(SocialPane))
   ok('pane renders Watch tab', pane.includes('Watch'))
 }
