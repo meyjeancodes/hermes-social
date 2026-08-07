@@ -2268,6 +2268,18 @@ export default {
   register(ctx) {
     // Capture ctx so loadPref/savePref can use the plugin-scoped storage.
     PCTX = ctx
-    return ctx.register({ id: 'pane', area: 'panes', title: 'Social', data: { placement: 'main' }, render: () => h(SocialPane, {}) })
+    // Relocate Social to the sidebar under Kanban (Kanban-consistent): a sidebar
+    // nav row + a paired route page. External plugins go through the same
+    // registry as built-ins, so 'sidebar.nav' / 'routes' work here exactly as
+    // they do for Kanban. We intentionally DROP the old 'panes' main pane so we
+    // don't mount two SocialPane instances (the route page is a separate tree).
+    // Tradeoff: like Kanban, Social is now a navigable page — its webviews mount
+    // on open and unmount on leave (logins persist via partition; scroll state
+    // does not). Clicking the sidebar "Social" row navigates to /social.
+    const contribs = [
+      { id: 'nav', area: 'sidebar.nav', order: 60, data: { codicon: 'globe', label: 'Social', path: '/social' } },
+      { id: 'route', area: 'routes', data: { path: '/social' }, render: () => h(SocialPane, {}) },
+    ]
+    return ctx.registerMany ? ctx.registerMany(contribs) : contribs.map((c) => ctx.register(c))
   },
 }

@@ -66,7 +66,9 @@ cp com.hermes.social.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.hermes.social.plist
 ```
 
-In Hermes: ⌘K → *Reload desktop plugins*, open the **Social** tab.
+In Hermes: ⌘K → *Reload desktop plugins*. Social appears in the **left sidebar**
+under the contributed-nav section (next to Kanban) — click **Social** to open
+its page at `/social`.
 
 ## Verify (clone-and-run)
 
