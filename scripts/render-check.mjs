@@ -3,6 +3,7 @@
 // misses actually throw here.
 import React from 'react'
 import { renderToString } from 'react-dom/server'
+const h = React.createElement
 
 globalThis.window = globalThis.window || { twttr: null }
 globalThis.document = globalThis.document || {
@@ -22,7 +23,13 @@ const html = renderToString(pane.render())
 for (const t of tabs) {
   if (!html.includes(t)) throw new Error('tab missing from render: ' + t)
 }
-console.log('rendered ' + html.length + ' chars; all ' + tabs.length + ' tabs present')
+// ComposePreview must render and reflect real per-platform limits (no guessing).
+const { ComposePreview, PLAT_LIMITS } = mod.__test__
+const previewHtml = renderToString(h(ComposePreview, { platforms: ['x', 'instagram'], text: 'hello world', media: 'image' }))
+if (!previewHtml.includes('X') || !previewHtml.includes('Instagram')) throw new Error('ComposePreview did not render per-platform rows')
+if (!previewHtml.includes('280')) throw new Error('ComposePreview missing X char limit (280)')
+if (PLAT_LIMITS.x.limit !== 280 || PLAT_LIMITS.instagram.limit !== 2200) throw new Error('PLAT_LIMITS wrong')
+console.log('ComposePreview renders with real per-platform limits (X 280, IG 2200)')
 
 // Every colour must come from a Hermes design token. --bg/--text/--border/
 // --accent are defined nowhere in the app's CSS, so any use of them silently

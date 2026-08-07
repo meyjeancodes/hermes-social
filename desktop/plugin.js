@@ -90,6 +90,45 @@ const PLATFORMS = [
   { key: 'hn', label: 'Hacker News', fields: [], public: true },
 ]
 
+// Per-platform post rules used by the compose preview. Real, sourced limits so
+// the user sees exactly how the post will behave before sending — no guessing.
+//  - limit: hard char cap (null = none)
+//  - media: what the platform accepts
+//  - link: link-handling note
+const PLAT_LIMITS = {
+  x: { limit: 280, media: 'images / video / poll', link: 'links count as 23 chars' },
+  reddit: { limit: null, media: 'image / video (per post)', link: 'link OR text body — not both' },
+  facebook: { limit: 63206, media: 'image / video / link', link: 'full URL shown' },
+  instagram: { limit: 2200, media: 'image / video only', link: 'links not clickable in caption' },
+  tiktok: { limit: 2200, media: 'video only', link: 'bio link only' },
+  twitch: { limit: 500, media: 'chat text', link: 'n/a' },
+  hn: { limit: null, media: 'text', link: 'title + comment' },
+}
+
+// Live per-platform compose preview: char count against the real limit plus the
+// media/link rules. Used by both Compose and Mass Post so the user never blind-sends.
+function ComposePreview({ platform, platforms, text, media }) {
+  const list = platforms && platforms.length ? platforms : [platform].filter(Boolean)
+  const rows = list.map((k) => {
+    const L = PLAT_LIMITS[k] || { limit: null, media: '', link: '' }
+    const n = (text || '').length
+    const over = L.limit != null && n > L.limit
+    const near = L.limit != null && n > L.limit * 0.9
+    return { k, L, n, over, near }
+  })
+  return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+    rows.map(({ k, L, n, over, near }) => h('div', { key: k, style: { display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 11, flexWrap: 'wrap' } },
+      h('span', { style: { fontWeight: 700, color: 'var(--ui-text-secondary, #b6bccb)', minWidth: 86 } }, (PLATFORMS.find((p) => p.key === k) || {}).label || k),
+      L.limit != null
+        ? h('span', { style: { fontFamily: MONO, color: over ? C_ERR : near ? C_WARN : 'var(--ui-text-tertiary, #8b93a7)' } }, `${n}/${L.limit}${over ? '  ✗ over' : ''}`)
+        : h('span', { style: { fontFamily: MONO, color: 'var(--ui-text-tertiary, #8b93a7)' } }, `${n} chars`),
+      h('span', { style: { color: 'var(--ui-text-tertiary, #8b93a7)' } }, L.media),
+      L.link && L.link !== 'n/a' && h('span', { style: { color: 'var(--ui-text-tertiary, #8b93a7)', fontStyle: 'italic' } }, '· ' + L.link),
+    )),
+    media && h('div', { style: { fontSize: 11, color: 'var(--ui-text-tertiary, #8b93a7)' } }, '📎 ' + media),
+  )
+}
+
 function ago(when) {
   if (!when) return ''
   // Accepts an ISO string (feeds) or epoch seconds/ms (a2a messages).
@@ -563,8 +602,8 @@ function Compose({ status, refresh, openInBrowse }) {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
       h('button', { onClick: send, disabled: busy || disabled || over || !text.trim(), style: btnStyle(false, busy || disabled || over || !text.trim()) }, busy ? 'Sending…' : (platform === 'twitch' ? (twitchAction === 'title' ? 'Update' : 'Send') : 'Post')),
       platform === 'x' && h('a', { href: xIntent(text), target: '_blank', rel: 'noreferrer', style: { ...btnStyle(true), textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }, title: 'Open X composer with this text prefilled' }, 'Open composer ↗'),
-      text.length > 0 && platform === 'x' && h('span', { style: { fontSize: 11, color: over ? C_ERR : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
     ),
+    h(ComposePreview, { platform, text, media: (imgUrl ? 'image' : '') + (videoUrl ? (imgUrl ? ' + video' : 'video') : '') }),
     h(ComposeOnSite, { text, openInBrowse }),
     result && h('div', { style: { padding: 10, borderRadius: 8, fontSize: 12, background: result.ok ? C_OK_BG : C_ERR_BG, color: result.ok ? C_OK : C_ERR, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }, result.ok ? '✓ ' + (result.url || result.id || 'Posted') : '✗ ' + (result.error || 'failed'))
   )
@@ -635,7 +674,7 @@ function MassPost({ status, refresh }) {
 
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, padding: 12, overflowY: 'auto' } },
     h('textarea', { placeholder: 'One draft — posted to every platform you pick below.', value: text, onChange: (e) => setText(e.target.value), rows: 4, style: { ...fieldStyle, resize: 'vertical', fontFamily: 'inherit' } }),
-    text.length > 0 && h('div', { style: { fontSize: 11, color: over ? C_ERR : 'var(--ui-text-tertiary, #8b93a7)' } }, `${text.length}/280`),
+    h(ComposePreview, { platforms: chosen, text, media: (imgUrl ? 'image' : '') + (vidUrl ? (imgUrl ? ' + video' : 'video') : '') }),
     h('div', { style: { fontSize: 12, color: 'var(--ui-text-tertiary, #8b93a7)' } }, 'Post to:'),
     allConn.length === 0 && h('div', { style: { fontSize: 12, color: C_WARN } }, 'No platforms connected yet — add creds in Settings (and hit Test).'),
     h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
@@ -2070,16 +2109,56 @@ function SiteFrame({ site, override, onClose, compact, onTitle }) {
     el.addEventListener('did-change-can-go-back-forward', onCanGo)
     el.addEventListener('page-title-updated', onTitle)
     el.addEventListener('new-window', onNewWindow)
+    // Restore the saved scroll position once the guest has painted. The route
+    // page unmounts the webview on leave, so without this the page jumps to top
+    // every time you reopen Social — the one rough edge of the sidebar move.
+    const onRestoreScroll = () => {
+      try {
+        const key = 'hermes-social:scroll:' + site.key
+        const y = Number(localStorage.getItem(key) || '0')
+        if (y > 0) el.executeJavaScript('try{window.scrollTo(0,' + y + ')}catch(e){}').catch(() => {})
+      } catch { /* localStorage unavailable */ }
+    }
+    el.addEventListener('did-finish-load', onRestoreScroll)
     return () => {
+      // Persist scroll on unmount so reopening lands where you left off.
+      try {
+        const key = 'hermes-social:scroll:' + site.key
+        el.executeJavaScript('(window.scrollY||document.documentElement.scrollTop||0)')
+          .then((y) => { if (y) localStorage.setItem(key, String(y)) }).catch(() => {})
+      } catch { /* ignore */ }
       el.removeEventListener('did-attach', onDom)
       el.removeEventListener('did-finish-load', onLoad)
       el.removeEventListener('did-fail-load', onFail)
       el.removeEventListener('did-navigate', onNav)
       el.removeEventListener('did-navigate-in-page', onNav)
       el.removeEventListener('did-change-can-go-back-forward', onCanGo)
+      el.removeEventListener('page-title-updated', onTitle)
       el.removeEventListener('new-window', onNewWindow)
+      el.removeEventListener('did-finish-load', onRestoreScroll)
     }
   }, [])
+
+  // Persist scroll continuously (throttled) so a crash/unmount mid-scroll keeps
+  // the last position rather than the last full load.
+  React.useEffect(() => {
+    const el = wv.current
+    if (!el || typeof el.getWebContentsId !== 'function') return
+    let t = null
+    const onScroll = () => {
+      if (t) return
+      t = setTimeout(() => {
+        t = null
+        try {
+          const key = 'hermes-social:scroll:' + site.key
+          el.executeJavaScript('(window.scrollY||document.documentElement.scrollTop||0)')
+            .then((y) => { if (y) localStorage.setItem(key, String(y)) }).catch(() => {})
+        } catch { /* ignore */ }
+      }, 800)
+    }
+    el.addEventListener('did-navigate-in-page', onScroll)
+    return () => el.removeEventListener('did-navigate-in-page', onScroll)
+  }, [site.key])
 
   // A later Compose jump to an already-open site navigates the live guest.
   const lastOverride = React.useRef(override)
@@ -2261,7 +2340,7 @@ function platBtn(active, configured, dim) {
 }
 
 // Exported for the render/embed test harnesses (scripts/*.mjs). Not used by the app.
-export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, CommandPalette, useUnread, SITES, SITE_BY_KEY, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor }
+export const __test__ = { StreamItem, Avatar, ImageGrid, LinkCard, QuoteCard, VideoEmbed, Timeline, Inbox, Sources, Messages, Bubble, NewConversation, Engagement, AutoReply, FeedList, BrowseHub, SiteFrame, ComposeOnSite, Radar, Watch, WatchQuery, SocialPane, CommandPalette, useUnread, SITES, SITE_BY_KEY, SITE_INTENT, SITE_SEARCH, CLEAN_CSS, CLEAN_UNIVERSAL, cleanCssFor, MAX_LIVE, readMode, useThemeMode, useIsLight, LIGHT_INK, OK_C, ERR_C, WARN_C, inkFor, okColor, errColor, warnColor, tint, THEME_CSS, THEME_STYLE_ID, SRC_COLOR, SRC_COLOR_LIGHT, srcColor, PLATFORMS, PLAT_LIMITS, ComposePreview }
 
 export default {
   id: ID,
