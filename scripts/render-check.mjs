@@ -12,10 +12,26 @@ globalThis.document = globalThis.document || {
 
 const mod = await import('../desktop/plugin.js')
 const plugin = mod.default
-let pane = null
-plugin.register({ register: (c) => { pane = c; return c } })
-if (!pane) throw new Error('register() did not yield a contribution')
-console.log('contribution:', pane.id, pane.area, JSON.stringify(pane.data))
+// Capture ALL contributions (register() may call ctx.registerMany with several).
+const contribs = []
+const fakeCtx = {
+  register: (c) => { contribs.push(c); return c },
+  registerMany: (cs) => { cs.forEach((c) => contribs.push(c)); return cs },
+}
+plugin.register(fakeCtx)
+if (!contribs.length) throw new Error('register() yielded no contributions')
+const byArea = (a) => contribs.filter((c) => c.area === a)
+const pane = contribs.find((c) => c.area === 'routes')
+console.log('contributions:', contribs.map((c) => c.area + ':' + c.id).join(', '))
+// Nav + route + native palette entry + global keybind must all be registered.
+if (!byArea('sidebar.nav').length) throw new Error('missing sidebar.nav contribution')
+if (!byArea('routes').length) throw new Error('missing routes contribution')
+const pal = byArea('palette')[0]
+if (!pal || !pal.data || typeof pal.data.run !== 'function') throw new Error('missing palette contribution with run()')
+const kb = byArea('keybinds')[0]
+if (!kb || !kb.data || typeof kb.data.run !== 'function') throw new Error('missing keybinds contribution with run()')
+if (!kb.data.defaults || !kb.data.defaults.includes('mod+shift+s')) throw new Error('keybind missing mod+shift+s default')
+console.log('registered sidebar.nav + routes + palette(Open Social) + keybinds(⌘⇧S)')
 
 // Sources folded into Settings; Browse (live sites) is now the default tab.
 const tabs = ['Browse', 'Radar', 'Timeline', 'Inbox', 'Compose', 'Mass Post', 'Settings']

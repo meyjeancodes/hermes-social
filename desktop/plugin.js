@@ -2355,9 +2355,20 @@ export default {
     // Tradeoff: like Kanban, Social is now a navigable page — its webviews mount
     // on open and unmount on leave (logins persist via partition; scroll state
     // does not). Clicking the sidebar "Social" row navigates to /social.
+    //
+    // Native command-palette entry + global hotkey: the app reads PALETTE_AREA
+    // and KEYBINDS_AREA via useContributions (verified in command-palette/contrib
+    // and lib/keybinds/actions + contributed-actions.test.ts), so both are
+    // first-class for external plugins — no TS constants needed, just the area
+    // string literals and a hash navigation (the app uses a HashRouter).
+    const navSocial = () => { try { window.location.hash = '#/social' } catch { /* noop */ } }
     const contribs = [
       { id: 'nav', area: 'sidebar.nav', order: 60, data: { codicon: 'globe', label: 'Social', path: '/social' } },
       { id: 'route', area: 'routes', data: { path: '/social' }, render: () => h(SocialPane, {}) },
+      // ⌘K "Open Social" — click-to-run native palette row.
+      { id: 'palette.open', area: 'palette', data: { id: 'social.open', label: 'Open Social', keywords: ['social', 'feeds', 'timeline', 'browse'], run: navSocial } },
+      // Global hotkey ⌘⇧S — first-class contributed keybind (dispatches + rebindable).
+      { id: 'key.open', area: 'keybinds', data: { id: 'social.openHotkey', category: 'view', defaults: ['mod+shift+s'], label: 'Social: Open', run: navSocial } },
     ]
     return ctx.registerMany ? ctx.registerMany(contribs) : contribs.map((c) => ctx.register(c))
   },
